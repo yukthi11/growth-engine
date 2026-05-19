@@ -11,7 +11,7 @@ async function bulkDispatch(campaignId, channel, companyId) {
         // 1. Get all leads in this campaign that are in valid starting statuses
         const isEmail = channel === 'email';
         const leadQuery = `
-            SELECT l.id, l.phone, l.email_address, l.business_name, c.whatsapp_template, l.outreach_draft, l.mockup_url
+            SELECT l.id, l.phone, l.email_address, l.business_name, c.whatsapp_template, l.outreach_draft, l.mockup_url, l.gap_pillar
             FROM leads l
             JOIN companies c ON l.company_id = c.id
             WHERE l.campaign_id = $1 
@@ -42,12 +42,14 @@ async function bulkDispatch(campaignId, channel, companyId) {
 
                 console.log(`[Bulk Dispatch DEBUG] Lead: ${lead.id}, Source: ${contentSource}, Match: ${lead.business_name}`);
 
-                // REPLACE mockup_url
+                // REPLACE mockup_url ONLY if it is a 'presence' pillar (no website)
+                let finalMediaUrl = (lead.gap_pillar === 'presence') ? lead.mockup_url : null;
+
                 if (channel === 'whatsapp' && content) {
                     // For WhatsApp, we attach the image directly and use text as caption
                     content = content.replace(/\{\{mockup_url\}\}/g, '').trim();
-                } else if (content && lead.mockup_url) {
-                    content = content.replace(/\{\{mockup_url\}\}/g, lead.mockup_url);
+                } else if (content && finalMediaUrl) {
+                    content = content.replace(/\{\{mockup_url\}\}/g, finalMediaUrl);
                 } else if (content) {
                     content = content.replace(/\{\{mockup_url\}\}/g, ''); // strip it if null
                 }
@@ -78,7 +80,7 @@ async function bulkDispatch(campaignId, channel, companyId) {
                             leadData: lead,
                             companyEmail: company.email_sender,
                             smtpPassword: company.smtp_password,
-                            mediaUrl: lead.mockup_url || company.email_media_url
+                            mediaUrl: finalMediaUrl || company.email_media_url
                         }, { attempts: 3, backoff: { type: 'exponential', delay: 30000 } });
                     }
                 } else {
@@ -87,7 +89,7 @@ async function bulkDispatch(campaignId, channel, companyId) {
                         lead_id: lead.id,
                         campaign_id: campaignId,
                         content,
-                        media_url: lead.mockup_url
+                        media_url: finalMediaUrl
                     }, {
                         attempts: 3,
                         backoff: { type: 'exponential', delay: 30000 }

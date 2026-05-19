@@ -31,18 +31,45 @@ const emailWorker = new Worker(
         const { messageId, email, subject, message, leadData, companyEmail, smtpPassword, mediaUrl } = job.data;
         console.log(`[Email] Processing messageId: ${messageId} to ${email}`);
 
-        const personalizedMessage = parseTemplate(message, leadData || {});
+        let finalMediaUrl = mediaUrl;
+
+        // JIT Mockup Generation: ONLY for leads that do not have a website (presence pillar)
+        if (!finalMediaUrl && leadData && leadData.gap_pillar === 'presence') {
+            console.log(`[Email Worker] JIT Mockup Generation triggered for lead ${leadData.id} (no website)...`);
+            try {
+                const { generateMockup } = require('../services/mockupGenerator');
+                const { uploadMockup } = require('../lib/r2');
+                
+                const buffer = await generateMockup({
+                    id: leadData.id,
+                    business_name: leadData.business_name,
+                    category: leadData.gap_vertical || 'generic',
+                    location: leadData.location_normalized || ''
+                });
+                
+                if (buffer) {
+                    finalMediaUrl = await uploadMockup(buffer, leadData.id);
+                    await pool.query('UPDATE leads SET mockup_url = $1 WHERE id = $2', [finalMediaUrl, leadData.id]);
+                    console.log(`[Email Worker] Successfully generated JIT mockup: ${finalMediaUrl}`);
+                }
+            } catch (mockupErr) {
+                console.error(`[Email Worker] Failed to generate JIT mockup for lead ${leadData.id}:`, mockupErr.message);
+                // Proceed with sending the email even if mockup generation fails
+            }
+        }
+
+        const personalizedMessage = parseTemplate(message, { ...leadData, mockup_url: finalMediaUrl || '' });
         
         let htmlPayload = null;
-        if (mediaUrl) {
+        if (finalMediaUrl) {
             // Format text: replace double newlines with paragraphs, single with breaks
             let formattedText = `<p style="margin: 0 0 16px 0;">${personalizedMessage.trim().replace(/\n\n/g, '</p><p style="margin: 0 0 16px 0;">').replace(/\n/g, '<br>')}</p>`;
             
             // Inline Image Replacement: If the raw URL is in the text, replace it with the image tag!
-            const imgTag = `<br><img src="${mediaUrl}" alt="Visual Proof" style="max-width: 100%; border-radius: 8px; margin: 10px 0;" /><br>`;
+            const imgTag = `<br><img src="${finalMediaUrl}" alt="Visual Proof" style="max-width: 100%; border-radius: 8px; margin: 10px 0;" /><br>`;
             
-            if (formattedText.includes(mediaUrl)) {
-                formattedText = formattedText.replace(mediaUrl, imgTag);
+            if (formattedText.includes(finalMediaUrl)) {
+                formattedText = formattedText.replace(finalMediaUrl, imgTag);
             } else {
                 // Fallback if the URL wasn't explicitly in the text
                 formattedText += `<div>${imgTag}</div>`;
