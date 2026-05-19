@@ -1,0 +1,7 @@
+node_modules
+.env
+wa-session
+auth_info_baileys
+.wwebjs_cache
+dist
+.git

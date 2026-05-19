@@ -1,0 +1,524 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=1200" />
+<title>Business Mockup</title>
+<style>
+  /* ── Reset & Base ── */
+  *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+  body {
+    width: 1200px;
+    height: 630px;
+    overflow: hidden;
+    font-family: Arial, 'Helvetica Neue', sans-serif;
+    background: #ffffff;
+    color: #1a1a1a;
+  }
+
+  /* ── NAV ── */
+  #nav {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 48px;
+    height: 64px;
+    background: #ffffff;
+    border-bottom: 1px solid #f0eeea;
+  }
+
+  .nav-brand {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    text-decoration: none;
+  }
+
+  .nav-logo-circle {
+    width: 36px;
+    height: 36px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 15px;
+    font-weight: 700;
+    color: #ffffff;
+    flex-shrink: 0;
+  }
+
+  .nav-business-name {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 17px;
+    font-weight: 700;
+    letter-spacing: 0.2px;
+  }
+
+  .nav-links {
+    display: flex;
+    gap: 32px;
+    list-style: none;
+  }
+
+  .nav-links li a {
+    font-size: 13px;
+    font-weight: 500;
+    color: #888;
+    text-decoration: none;
+    letter-spacing: 0.3px;
+  }
+
+  .nav-cta-btn {
+    font-size: 13px;
+    font-weight: 600;
+    color: #ffffff;
+    padding: 9px 20px;
+    border-radius: 8px;
+    text-decoration: none;
+    letter-spacing: 0.2px;
+    white-space: nowrap;
+  }
+
+  /* ── HERO ── */
+  #hero {
+    display: grid;
+    grid-template-columns: 1fr 420px;
+    height: 400px;
+    padding: 0 48px 0 48px;
+    align-items: center;
+    gap: 0;
+  }
+
+  /* Left col */
+  .hero-left {
+    padding-right: 40px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 0;
+  }
+
+  .hero-welcome {
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 2.5px;
+    text-transform: uppercase;
+    margin-bottom: 14px;
+  }
+
+  .hero-heading {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 44px;
+    font-weight: 700;
+    line-height: 1.13;
+    color: #1a1a1a;
+    margin-bottom: 18px;
+    letter-spacing: -0.5px;
+  }
+
+  .hero-heading em {
+    font-style: italic;
+  }
+
+  .hero-desc {
+    font-size: 14px;
+    line-height: 1.65;
+    color: #666;
+    margin-bottom: 26px;
+    max-width: 420px;
+  }
+
+  .hero-btns {
+    display: flex;
+    gap: 12px;
+    margin-bottom: 22px;
+  }
+
+  .btn-fill {
+    font-size: 13px;
+    font-weight: 700;
+    color: #ffffff;
+    padding: 11px 22px;
+    border-radius: 8px;
+    text-decoration: none;
+    letter-spacing: 0.2px;
+  }
+
+  .btn-outline {
+    font-size: 13px;
+    font-weight: 600;
+    padding: 11px 22px;
+    border-radius: 8px;
+    border: 2px solid;
+    text-decoration: none;
+    background: transparent;
+    letter-spacing: 0.2px;
+  }
+
+  .hero-hours {
+    display: flex;
+    align-items: center;
+    gap: 7px;
+    font-size: 13px;
+    font-weight: 500;
+    color: #888;
+  }
+
+  .hero-hours strong {
+    font-weight: 700;
+  }
+
+  .hours-icon {
+    width: 15px;
+    height: 15px;
+    flex-shrink: 0;
+    opacity: 0.7;
+  }
+
+  /* Right col — visual */
+  .hero-right {
+    position: relative;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    height: 100%;
+  }
+
+  .ring {
+    width: 300px;
+    height: 300px;
+    border-radius: 50%;
+    border: 3px dashed;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    position: relative;
+  }
+
+  .circle-outer {
+    width: 248px;
+    height: 248px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+
+  .circle-inner {
+    width: 180px;
+    height: 180px;
+    border-radius: 50%;
+  }
+
+  /* Floating badge */
+  .badge-float {
+    position: absolute;
+    top: 30px;
+    right: 10px;
+    background: #ffffff;
+    border: 1px solid #eee;
+    border-radius: 10px;
+    padding: 8px 13px;
+    box-shadow: 0 4px 14px rgba(0,0,0,0.09);
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    font-size: 12px;
+    font-weight: 700;
+    color: #333;
+    white-space: nowrap;
+  }
+
+  /* Floating review card */
+  .review-float {
+    position: absolute;
+    bottom: 28px;
+    right: 0px;
+    background: #ffffff;
+    border: 1px solid #eee;
+    border-radius: 12px;
+    padding: 11px 14px;
+    box-shadow: 0 4px 16px rgba(0,0,0,0.1);
+    width: 190px;
+  }
+
+  .review-top {
+    display: flex;
+    align-items: center;
+    gap: 9px;
+    margin-bottom: 6px;
+  }
+
+  .review-avatar {
+    width: 30px;
+    height: 30px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  .review-service {
+    font-size: 12px;
+    font-weight: 700;
+    color: #1a1a1a;
+  }
+
+  .review-stars {
+    font-size: 11px;
+    color: #f59e0b;
+    letter-spacing: 1px;
+    margin-bottom: 4px;
+  }
+
+  .review-text {
+    font-size: 11px;
+    color: #888;
+    line-height: 1.4;
+    margin-bottom: 5px;
+  }
+
+  .review-price {
+    font-size: 12px;
+    font-weight: 700;
+  }
+
+  /* ── SERVICES STRIP ── */
+  #services {
+    background: #ffffff;
+    padding: 28px 48px 0;
+    border-top: 1px solid #f0eeea;
+  }
+
+  .section-heading {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 20px;
+    font-weight: 700;
+    color: #1a1a1a;
+    margin-bottom: 18px;
+  }
+
+  .section-heading em {
+    font-style: italic;
+  }
+
+  .cards-grid {
+    display: grid;
+    grid-template-columns: repeat(4, 1fr);
+    gap: 16px;
+  }
+
+  .service-card {
+    background: #fff;
+    border: 1px solid #f0eeea;
+    border-radius: 14px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+
+  .card-circle {
+    width: 52px;
+    height: 52px;
+    border-radius: 50%;
+    margin-bottom: 2px;
+  }
+
+  .card-rating {
+    font-size: 11px;
+    color: #888;
+    font-weight: 500;
+  }
+
+  .card-rating .star {
+    font-weight: 700;
+  }
+
+  .card-name {
+    font-family: Georgia, 'Times New Roman', serif;
+    font-size: 14px;
+    font-weight: 700;
+    color: #1a1a1a;
+    line-height: 1.3;
+  }
+
+  .card-price {
+    font-size: 15px;
+    font-weight: 700;
+  }
+
+  .card-desc {
+    font-size: 11px;
+    color: #aaa;
+    line-height: 1.4;
+  }
+</style>
+</head>
+<body>
+
+<!-- ── NAV ── -->
+<nav id="nav">
+  <div class="nav-brand">
+    <div class="nav-logo-circle" id="logoCircle"></div>
+    <span class="nav-business-name" id="navBrand"></span>
+  </div>
+  <ul class="nav-links" id="navLinks"></ul>
+  <a href="#" class="nav-cta-btn" id="navCta"></a>
+</nav>
+
+<!-- ── HERO ── -->
+<section id="hero">
+  <!-- Left -->
+  <div class="hero-left">
+    <div class="hero-welcome" id="heroWelcome">Welcome</div>
+    <h1 class="hero-heading" id="heroHeading"></h1>
+    <p class="hero-desc" id="heroDesc"></p>
+    <div class="hero-btns">
+      <a href="#" class="btn-fill" id="heroCta1"></a>
+      <a href="#" class="btn-outline" id="heroCta2"></a>
+    </div>
+    <div class="hero-hours">
+      <svg class="hours-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+        <circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/>
+      </svg>
+      <span id="hoursText"></span>
+    </div>
+  </div>
+
+  <!-- Right visual -->
+  <div class="hero-right">
+    <div class="ring" id="ring">
+      <div class="circle-outer" id="circleOuter">
+        <div class="circle-inner" id="circleInner"></div>
+      </div>
+    </div>
+    <!-- Badge -->
+    <div class="badge-float" id="badgeFloat">
+      Top Rated &#11088;
+    </div>
+    <!-- Review card -->
+    <div class="review-float" id="reviewFloat">
+      <div class="review-top">
+        <div class="review-avatar" id="reviewAvatar"></div>
+        <div class="review-service" id="reviewService"></div>
+      </div>
+      <div class="review-stars">&#9733;&#9733;&#9733;&#9733;&#9733;</div>
+      <div class="review-text">"Absolutely loved it. Highly recommend!"</div>
+      <div class="review-price" id="reviewPrice"></div>
+    </div>
+  </div>
+</section>
+
+<!-- ── SERVICES ── -->
+<section id="services">
+  <div class="section-heading" id="sectionHeading"></div>
+  <div class="cards-grid" id="cardsGrid"></div>
+</section>
+
+<!-- Data injection points — safe against quotes -->
+<div id="_bizName" style="display:none">{{business_name}}</div>
+<div id="_locName" style="display:none">{{location}}</div>
+<div id="_config" style="display:none">{{CATEGORY_CONFIG}}</div>
+
+<script>
+(function () {
+  const configText = document.getElementById('_config').textContent;
+  const CONFIG = configText.includes('CATEGORY_CONFIG') ? {} : JSON.parse(configText);
+
+  const C = CONFIG;
+  const a = C.accent;
+
+  /* ── helpers ── */
+  function $id(id) { return document.getElementById(id); }
+
+  const bizName = $id('_bizName').textContent || 'Business';
+  const locName = $id('_locName').textContent || '';
+
+  /* ── NAV ── */
+  $id('logoCircle').style.background = a;
+  $id('logoCircle').textContent = bizName.charAt(0).toUpperCase();
+
+  $id('navBrand').textContent = bizName;
+  $id('navBrand').style.color = a;
+
+  $id('navCta').textContent = C.cta1;
+  $id('navCta').style.background = a;
+
+  const navUl = $id('navLinks');
+  (C.navLinks || []).forEach(function (label) {
+    const li = document.createElement('li');
+    const link = document.createElement('a');
+    link.href = '#';
+    link.textContent = label;
+    li.appendChild(link);
+    navUl.appendChild(li);
+  });
+
+  /* ── HERO bg ── */
+  $id('hero').style.background = C.accentLight;
+
+  /* ── HERO left ── */
+  $id('heroWelcome').style.color = a;
+
+  const line1 = bizName;
+  const line2 = C.titleLine2 || '';
+  const accent = C.titleAccent || '';
+  let headHtml = line1 + '<br>';
+  if (accent && line2.includes(accent)) {
+    headHtml += line2.replace(accent, '<em style="color:' + a + '">' + accent + '</em>');
+  } else {
+    headHtml += '<em style="color:' + a + '">' + line2 + '</em>';
+  }
+  $id('heroHeading').innerHTML = headHtml;
+
+  $id('heroDesc').textContent =
+    'Serving the community of ' + locName + ' with quality, care, and passion. ' +
+    'Discover what makes us the best choice in ' + locName + '.';
+
+  $id('heroCta1').textContent = C.cta1;
+  $id('heroCta1').style.background = a;
+
+  $id('heroCta2').textContent = C.cta2;
+  $id('heroCta2').style.color = a;
+  $id('heroCta2').style.borderColor = a;
+
+  $id('hoursText').innerHTML =
+    '<strong style="color:' + a + '">' + (C.hours || '') + '</strong>' +
+    ' &middot; ' + locName;
+
+  /* ── HERO right ── */
+  $id('ring').style.borderColor = C.ringColor;
+  $id('circleOuter').style.background = C.circleColor;
+  $id('circleInner').style.background = C.innerColor;
+
+  /* review card */
+  $id('reviewAvatar').style.background = C.circleColor;
+  const firstCard = (C.cards || [])[0] || {};
+  $id('reviewService').textContent = firstCard.name || C.cta1;
+  $id('reviewPrice').textContent = firstCard.price || '';
+  $id('reviewPrice').style.color = a;
+
+  /* ── SERVICES ── */
+  const sAccent = C.sectionAccent || '';
+  const sTitle  = C.sectionTitle || 'Our';
+  let secHtml = sTitle + ' ';
+  secHtml += '<em style="color:' + a + '">' + sAccent + '</em>';
+  $id('sectionHeading').innerHTML = secHtml;
+
+  const grid = $id('cardsGrid');
+  (C.cards || []).forEach(function (card) {
+    const div = document.createElement('div');
+    div.className = 'service-card';
+    div.innerHTML =
+      '<div class="card-circle" style="background:' + (card.color || C.circleColor) + '"></div>' +
+      '<div class="card-rating">(5.6k) <span class="star" style="color:' + a + '">&#9733;</span></div>' +
+      '<div class="card-name">' + card.name + '</div>' +
+      '<div class="card-price" style="color:' + a + '">' + (card.price || '') + '</div>' +
+      '<div class="card-desc">' + (card.desc || '') + '</div>';
+    grid.appendChild(div);
+  });
+})();
+</script>
+</body>
+</html>

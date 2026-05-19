@@ -1,0 +1,10 @@
+{
+  "name": "growth-engine-root",
+  "version": "1.0.0",
+  "scripts": {
+    "setup": "npm run setup --prefix backend",
+    "dev:backend": "npm run dev:all --prefix backend",
+    "dev:frontend": "npm run dev --prefix frontend",
+    "start": "powershell ./run.ps1"
+  }
+}
