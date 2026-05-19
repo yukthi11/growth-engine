@@ -49,11 +49,11 @@ const whatsappWorker = new Worker('whatsapp-send-v2', async (job) => {
     }
 
     // Daily Cap Enforcement (Redis)
-    const DAILY_CAP = 50;
+    const DAILY_CAP = parseInt(process.env.WA_DAILY_CAP) || 75;
     const currentCount = await connection.get('wa_sends_today') || 0;
     
     if (parseInt(currentCount) >= DAILY_CAP) {
-        console.warn(`[WhatsApp Worker] Daily limit reached. Job ${job.id} postponed.`);
+        console.warn(`[WhatsApp Worker] Daily limit (${DAILY_CAP}) reached. Job ${job.id} postponed.`);
         throw new Error('Daily limit reached');
     }
 
@@ -64,18 +64,49 @@ const whatsappWorker = new Worker('whatsapp-send-v2', async (job) => {
     }
 
     try {
+        // TEST MODE Support: If in test mode, check the test phone number instead
+        const IS_TEST = (process.env.TEST_MODE || '').trim().toLowerCase() === 'true';
+        const targetPhone = IS_TEST ? (process.env.TEST_PHONE || lead.phone) : lead.phone;
+
         // [STABILITY FIX] Skip numbers that aren't on WhatsApp
-        const registered = await isRegisteredUser(lead.phone);
+        const registered = await isRegisteredUser(targetPhone);
         if (!registered) {
-            console.log(`[WhatsApp Worker] ❌ Number ${lead.phone} is NOT on WhatsApp. Skipping.`);
+            console.log(`[WhatsApp Worker] ❌ Number ${targetPhone} is NOT on WhatsApp. Skipping.`);
             await pool.query("UPDATE leads SET status='rejected', rejection_reason='Not on WhatsApp' WHERE id=$1", [lead_id]);
             return;
         }
 
-        await sendWhatsAppMessage(lead.phone, message.content || message.message_text, media_url);
+        let finalMediaUrl = media_url;
+        
+        // JIT Mockup Generation: ONLY for leads that do not have a website (presence pillar)
+        if (!finalMediaUrl && lead.gap_pillar === 'presence') {
+            console.log(`[WhatsApp Worker] JIT Mockup Generation triggered for lead ${lead.id} (no website)...`);
+            try {
+                const { generateMockup } = require('../services/mockupGenerator');
+                const { uploadMockup } = require('../lib/r2');
+                
+                const buffer = await generateMockup({
+                    id: lead.id,
+                    business_name: lead.business_name,
+                    category: lead.gap_vertical || 'generic',
+                    location: lead.location_normalized || ''
+                });
+                
+                if (buffer) {
+                    finalMediaUrl = await uploadMockup(buffer, lead.id);
+                    await pool.query('UPDATE leads SET mockup_url = $1 WHERE id = $2', [finalMediaUrl, lead.id]);
+                    console.log(`[WhatsApp Worker] Successfully generated JIT mockup: ${finalMediaUrl}`);
+                }
+            } catch (mockupErr) {
+                console.error(`[WhatsApp Worker] Failed to generate JIT mockup for lead ${lead.id}:`, mockupErr.message);
+                // We proceed to send the text message even if mockup fails
+            }
+        }
+
+        await sendWhatsAppMessage(lead.phone, message.content || message.message_text, finalMediaUrl);
 
         // Clean up R2 storage to save space after sending
-        if (media_url) {
+        if (finalMediaUrl) {
             try {
                 await deleteMockup(lead_id);
             } catch (cleanupErr) {

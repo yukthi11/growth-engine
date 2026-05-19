@@ -33,7 +33,7 @@ const PILLAR_MESSAGES = {
      * Triggered by: noWebsite, brokenWebsite, slowWebsite, noSSL, noSchema, missingGBPFields
      */
     presence: {
-        whatsapp: `Hi, I'm Yukthi! I came across {{business_name}} on Google. I noticed you don't have a website yet, which means a lot of people searching for a similar category online are ending up at your competitors instead. Can you please redirect me towards the right person for this.I went ahead and built a quick preview for you: {{mockup_url}} please find the image below. It's a basic structure that we can work on based on your requirements.`,
+        whatsapp: `Hi, I'm Yukthi! I came across {{business_name}} on Google. I noticed you don't have a website yet, which means a lot of people searching for a similar category online are ending up at your competitors instead. Can you please redirect me towards the right person for this. I went ahead and built a quick preview for you: {{mockup_url}}. It's a basic structure that we can work on based on your requirements.`,
 
         email: {
             subject: `Quick note about {{business_name}}`,
