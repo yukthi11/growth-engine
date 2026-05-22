@@ -1,7 +1,7 @@
 import React from 'react';
 import LeadRow from './LeadRow';
 
-const LeadTable = ({ leads, onUpdate, onViewMessages, onEdit, onDelete }) => {
+const LeadTable = ({ leads, onUpdate, onViewMessages, onEdit, onDelete, onOpenOutreachStatus }) => {
     if (!leads || leads.length === 0) {
         return (
             <div className="bg-midnight-lighter px-8 py-20 text-center border border-white/5 rounded-3xl premium-shadow flex flex-col items-center">
@@ -19,34 +19,38 @@ const LeadTable = ({ leads, onUpdate, onViewMessages, onEdit, onDelete }) => {
     }
 
     return (
-        <div className="bg-midnight-lighter rounded-3xl premium-shadow border border-white/5">
-            <table className="min-w-full divide-y divide-white/5">
-                <thead>
-                    <tr className="bg-white/5">
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest">Business</th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest">Email</th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest">Phone</th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest">Website</th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest">Location</th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest">Score</th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest">Outreach DNA</th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest">Status</th>
-                        <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest w-10"></th>
-                    </tr>
-                </thead>
-                <tbody className="divide-y divide-white/5">
-                    {leads.map((lead) => (
-                        <LeadRow
-                            key={lead.id}
-                            lead={lead}
-                            onUpdate={onUpdate}
-                            onViewMessages={onViewMessages}
-                            onEdit={onEdit}
-                            onDelete={onDelete}
-                        />
-                    ))}
-                </tbody>
-            </table>
+        <div className="bg-midnight-lighter rounded-3xl premium-shadow border border-white/5 overflow-hidden">
+            <div className="overflow-x-auto">
+                <table className="min-w-full divide-y divide-white/5">
+                    <thead>
+                        <tr className="bg-white/5">
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest whitespace-nowrap">Business</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest whitespace-nowrap">Email</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest whitespace-nowrap">Phone</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest whitespace-nowrap">Website</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest whitespace-nowrap">Location</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest whitespace-nowrap">Score</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest whitespace-nowrap">Outreach DNA</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest whitespace-nowrap">Outreach</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest whitespace-nowrap">Status</th>
+                            <th className="px-6 py-4 text-left text-xs font-bold text-slate-500 uppercase tracking-widest w-10"></th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-white/5">
+                        {leads.map((lead) => (
+                            <LeadRow
+                                key={lead.id}
+                                lead={lead}
+                                onUpdate={onUpdate}
+                                onViewMessages={onViewMessages}
+                                onEdit={onEdit}
+                                onDelete={onDelete}
+                                onOpenOutreachStatus={onOpenOutreachStatus}
+                            />
+                        ))}
+                    </tbody>
+                </table>
+            </div>
         </div>
     );
 };

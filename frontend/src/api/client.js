@@ -78,6 +78,19 @@ export const deleteCampaign = async (id) => {
     return response.data;
 };
 
+export const sendCampaignOutreach = async (campaignId, channel, companyId) => {
+    const response = await client.post(`/campaigns/${campaignId}/bulk-send`, {
+        channel,
+        companyId
+    });
+    return response.data;
+};
+
+export const getOutreachProgress = async (campaignId) => {
+    const response = await client.get(`/campaigns/${campaignId}/outreach-progress`);
+    return response.data;
+};
+
 // --- Discovery Methods ---
 
 export const runDiscovery = async (data, signal = null) => {

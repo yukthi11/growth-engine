@@ -48,14 +48,11 @@ async function handleIncomingReply(phone, messageText) {
     );
     const replyId = insertRes.rows[0].id;
 
-    // 2. Update lead status to 'replied'
-    await pool.query("UPDATE leads SET status='replied' WHERE id=$1", [lead.id]);
+    // 2. Update lead status directly to the intent so it reflects in the UI and Google Sheet!
+    await pool.query("UPDATE leads SET status=$2 WHERE id=$1", [lead.id, intent]);
 
-    // 3. Automated handle for 'not_interested' - DISABLED TO PROTECT PRIVACY
     if (intent === 'not_interested') {
         console.log(`[Reply Handler] Lead ${lead.id} is NOT INTERESTED. (Auto-reply skipped for safety)`);
-        // await sendWhatsAppMessage(phone, "No worries, thanks for your time!"); 
-        await pool.query("UPDATE leads SET status='ignored' WHERE id=$1", [lead.id]);
         return;
     }
 

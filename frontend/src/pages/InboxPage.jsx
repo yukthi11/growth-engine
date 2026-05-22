@@ -87,12 +87,40 @@ const LeadListItem = ({ lead, selected, onClick, hasUnread }) => (
         </p>
         <div style={{ display: 'flex', gap: 6, marginTop: 4 }}>
             <IntentBadge intent={lead.latest_intent} />
+            {lead.has_failed_delivery && (
+                <span style={{
+                    background: 'rgba(239,68,68,0.12)',
+                    color: '#F87171',
+                    border: '1px solid rgba(239,68,68,0.25)',
+                    borderRadius: '999px',
+                    fontSize: '9px',
+                    fontWeight: 900,
+                    padding: '2px 8px',
+                    letterSpacing: '0.08em',
+                    textTransform: 'uppercase',
+                    whiteSpace: 'nowrap',
+                }}>
+                    delivery failed
+                </span>
+            )}
             {lead.reply_count > 1 && (
                 <span style={{ color: '#7C3AED', fontSize: 9, fontWeight: 900 }}>
                     {lead.reply_count} msgs
                 </span>
             )}
         </div>
+        {lead.has_failed_delivery && lead.latest_failed_reason && (
+            <p style={{
+                color: '#FCA5A5',
+                fontSize: 10,
+                margin: '4px 0 0',
+                overflow: 'hidden',
+                textOverflow: 'ellipsis',
+                whiteSpace: 'nowrap',
+            }}>
+                Reason: {lead.latest_failed_reason}
+            </p>
+        )}
     </button>
 );
 
@@ -302,6 +330,8 @@ const InboxPage = ({ companyId, socket: externalSocket, initialLead, onLeadChang
                 latest_at: r.created_at,
                 reply_count: r.reply_count || 1, 
                 lead_status: r.lead_status,
+                has_failed_delivery: !!r.has_failed_delivery,
+                latest_failed_reason: r.latest_failed_reason || '',
             }));
             setLeads(processedLeads);
         } catch (err) {

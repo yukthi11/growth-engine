@@ -117,8 +117,10 @@ async function generateFirstMessage(lead, company) {
     let message;
     let source;
 
-    if (pillar) {
-        // Priority 1: Structured pillar message
+    const isGrowthEngine = company?.name?.trim().toLowerCase() === 'growth engine';
+
+    if (pillar && isGrowthEngine) {
+        // Priority 1: Structured pillar message (ONLY for Growth Engine)
         const resolved = resolveOutreachByPillar(pillar, businessName, location);
         message = resolved.whatsapp;
         source = `pillar:${pillar}`;
@@ -168,8 +170,10 @@ async function generateEmailDraft(lead, company) {
 
     let subject, body;
 
-    if (pillar) {
-        // Priority 1: Structured pillar message
+    const isGrowthEngine = company?.name?.trim().toLowerCase() === 'growth engine';
+
+    if (pillar && isGrowthEngine) {
+        // Priority 1: Structured pillar message (ONLY for Growth Engine)
         const resolved = resolveOutreachByPillar(pillar, businessName, location);
         subject = resolved.email.subject;
         body = resolved.email.body;

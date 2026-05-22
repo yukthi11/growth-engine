@@ -55,10 +55,25 @@ async function _sendViaSMTP(to, subject, text, fromEmail, smtpPassword, html) {
             `Run: npm install nodemailer in the backend directory.`
         );
     }
-    const transporter = nodemailer.createTransport({
-        service: 'gmail',
-        auth: { user: fromEmail, pass: smtpPassword },
-    });
+    const isGmail = fromEmail.includes('@gmail.com') || fromEmail.includes('@googlemail.com');
+    
+    let transportConfig = {};
+    if (isGmail) {
+        transportConfig = {
+            service: 'gmail',
+            auth: { user: fromEmail, pass: smtpPassword }
+        };
+    } else {
+        // Fallback for custom domains like Google Workspace
+        transportConfig = {
+            host: process.env.SMTP_HOST || 'smtp.gmail.com',
+            port: process.env.SMTP_PORT || 465,
+            secure: true,
+            auth: { user: fromEmail, pass: smtpPassword }
+        };
+    }
+
+    const transporter = nodemailer.createTransport(transportConfig);
     const payload = { from: fromEmail, to, subject, text };
     if (html) payload.html = html;
     const info = await transporter.sendMail(payload);
@@ -82,11 +97,26 @@ async function _sendViaSMTP(to, subject, text, fromEmail, smtpPassword, html) {
  * @param {string|null} html          - Rich HTML body
  */
 const sendEmail = async (to, subject, text, fromEmail = null, smtpPassword = null, html = null) => {
+    // 🚨 TEST MODE Interceptor
+    const IS_TEST = (process.env.TEST_MODE || '').trim().toLowerCase() === 'true';
+    if (IS_TEST) {
+        if (!process.env.TEST_EMAIL) {
+            throw new Error("SECURITY HALT: TEST_MODE is enabled but TEST_EMAIL is missing in .env. Outreach aborted to prevent real-time delivery.");
+        }
+        const originalTo = to;
+        if (to !== process.env.TEST_EMAIL) {
+            to = process.env.TEST_EMAIL;
+            subject = `[TEST REDIRECT FROM ${originalTo}] ${subject}`;
+            console.log(`🚨 [TEST MODE] Intercepted email to ${originalTo}. Redirecting to ${to}`);
+        }
+    }
+
     const provider = detectProvider(fromEmail, smtpPassword);
     try {
         if (provider === 'smtp') {
             if (!smtpPassword) {
-                throw new Error(`SMTP password missing for ${fromEmail}. Email sending aborted (no fallback).`);
+                console.warn(`[Email] SMTP password missing for ${fromEmail}. Falling back to default system Resend email.`);
+                return await _sendViaResend(to, subject, text, null, html);
             }
             return await _sendViaSMTP(to, subject, text, fromEmail, smtpPassword, html);
         }

@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { getCompanies, getLeads, getCampaigns, runDiscovery, runDiscoveryBatch, cancelDiscovery, syncCampaignToSheets, syncWorkspaceToSheets, deleteCampaign, getReplies, getSequenceSteps, deleteLead, getCompanyStats, getPendingReplies } from '../api/client';
+import { getCompanies, getLeads, getCampaigns, runDiscovery, runDiscoveryBatch, cancelDiscovery, syncCampaignToSheets, syncWorkspaceToSheets, deleteCampaign, getReplies, getSequenceSteps, deleteLead, getCompanyStats, getPendingReplies, sendCampaignOutreach } from '../api/client';
 import CompanySelector from '../components/CompanySelector';
 import CampaignSelector from '../components/CampaignSelector';
 import LeadTable from '../components/LeadTable';
@@ -14,6 +14,8 @@ import SideNav from '../components/SideNav';
 import EditLeadModal from '../components/EditLeadModal';
 import ManageCompanyModal from '../components/ManageCompanyModal';
 import DraftTemplateModal from '../components/DraftTemplateModal';
+import SendOutreachModal from '../components/SendOutreachModal';
+import OutreachStatusModal from '../components/OutreachStatusModal';
 
 // Custom SVG Icons for the Main UI
 const Icons = {
@@ -62,6 +64,11 @@ const Dashboard = () => {
     const [replies, setReplies] = useState([]);
     const [sequenceSteps, setSequenceSteps] = useState([]);
     const [isDraftModalOpen, setIsDraftModalOpen] = useState(false);
+    const [isSendingOutreach, setIsSendingOutreach] = useState(false);
+    const [isSendOutreachModalOpen, setIsSendOutreachModalOpen] = useState(false);
+    const [outreachCampaignId, setOutreachCampaignId] = useState(null);
+    const [isOutreachStatusModalOpen, setIsOutreachStatusModalOpen] = useState(false);
+    const [selectedOutreachStatusLead, setSelectedOutreachStatusLead] = useState(null);
 
     const [socket, setSocket] = useState(null);
     // Holds the AbortController for the current single-query discovery fetch
@@ -401,6 +408,7 @@ const Dashboard = () => {
                 setDiscoveryResult({
                     count: res.leadsFound,
                     query: queries[0],
+                    campaignId: res.campaignId,
                     campaignName: campaigns.find(c => c.id.toString() === res.campaignId?.toString())?.name || 'Your Database'
                 });
                 fetchLeads(1);
@@ -418,6 +426,48 @@ const Dashboard = () => {
                 setPendingJobsCount(0);
             }
         }
+    };
+
+    const openSendOutreachModal = (campaignIdOverride = null) => {
+        const campaignId = campaignIdOverride || selectedCampaignId;
+        if (!campaignId) {
+            alert('Select a campaign before launching outreach.');
+            return;
+        }
+        if (!selectedCompanyId) {
+            alert('Select a company before launching outreach.');
+            return;
+        }
+        setOutreachCampaignId(campaignId);
+        setIsSendOutreachModalOpen(true);
+    };
+
+    const triggerSendOutreach = async (channel) => {
+        const campaignId = outreachCampaignId || selectedCampaignId;
+        if (!campaignId || !selectedCompanyId) {
+            alert('Select a campaign and company before launching outreach.');
+            return;
+        }
+
+        setIsSendingOutreach(true);
+        try {
+            await sendCampaignOutreach(campaignId, channel, selectedCompanyId);
+            
+            fetchLeads(page);
+            fetchDashboardHub();
+        } catch (err) {
+            console.error('Failed to send outreach:', err);
+            alert(err?.response?.data?.error || 'Failed to start outreach.');
+        } finally {
+            setIsSendingOutreach(false);
+            // We NO LONGER close the modal here! 
+            // The modal will transition to the progress tracking view automatically.
+        }
+    };
+
+    const openOutreachStatusModal = (lead) => {
+        setSelectedOutreachStatusLead(lead);
+        setIsOutreachStatusModalOpen(true);
     };
 
     const renderContent = () => {
@@ -474,6 +524,13 @@ const Dashboard = () => {
                                     {selectedCampaignId ? 'Sync Campaign' : 'Sync Workspace'}
                                 </button>
                                 <button onClick={() => setIsLeadModalOpen(true)} className="px-6 py-3 bg-white text-midnight rounded-2xl font-black uppercase text-[10px] shadow-lg shadow-white/5 transform hover:scale-95 transition-all">Add Lead</button>
+                                <button
+                                    onClick={() => openSendOutreachModal()}
+                                    disabled={!selectedCampaignId || isSendingOutreach}
+                                    className="px-6 py-3 bg-violet-600 hover:bg-violet-500 text-white rounded-2xl font-black uppercase text-[10px] shadow-lg shadow-violet-600/20 transform hover:scale-95 transition-all disabled:opacity-40 disabled:cursor-not-allowed disabled:transform-none"
+                                >
+                                    {isSendingOutreach ? 'Sending...' : 'Send Outreach'}
+                                </button>
                             </div>
                         </div>
                         <div className="rounded-[40px] border border-white/5 bg-white/[0.02]">
@@ -486,6 +543,7 @@ const Dashboard = () => {
                                 }}
                                 onEdit={openEditModal}
                                 onDelete={handleDeleteLead}
+                                onOpenOutreachStatus={openOutreachStatusModal}
                             />
                         </div>
 
@@ -602,6 +660,13 @@ const Dashboard = () => {
                                             className="px-6 py-3 bg-white/5 hover:bg-white/10 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all"
                                         >
                                             View Database
+                                        </button>
+                                        <button
+                                            onClick={() => openSendOutreachModal(discoveryResult.campaignId)}
+                                            disabled={!discoveryResult?.campaignId || isSendingOutreach}
+                                            className="px-6 py-3 bg-violet-600 hover:bg-violet-500 text-white rounded-xl font-black text-[10px] uppercase tracking-widest transition-all disabled:opacity-40 disabled:cursor-not-allowed"
+                                        >
+                                            {isSendingOutreach ? 'Sending...' : 'Send Outreach'}
                                         </button>
                                         <button
                                             onClick={() => setDiscoveryResult(null)}
@@ -737,11 +802,13 @@ const Dashboard = () => {
                 </div>
             </div>
 
-            <AddLeadModal companyId={selectedCompanyId} isOpen={isLeadModalOpen} campaigns={campaigns} defaultCampaignId={selectedCampaignId} onClose={() => setIsLeadModalOpen(false)} onSuccess={() => { fetchLeads(1); fetchDashboardHub(); }} />
+            <AddLeadModal companyId={selectedCompanyId} isOpen={isLeadModalOpen} campaigns={campaigns} defaultCampaignId={selectedCompanyId} onClose={() => setIsLeadModalOpen(false)} onSuccess={() => { fetchLeads(1); fetchDashboardHub(); }} />
             <CreateCampaignModal companyId={selectedCompanyId} isOpen={isCampaignModalOpen} onClose={() => setIsCampaignModalOpen(false)} onSuccess={() => { fetchCampaigns(); fetchDashboardHub(); }} />
             <EditLeadModal isOpen={isEditModalOpen} onClose={() => setIsEditModalOpen(false)} lead={selectedLeadForEdit} campaigns={campaigns} onSuccess={() => { fetchLeads(page); fetchDashboardHub(); }} />
             <ManageCompanyModal isOpen={isCompanyModalOpen} onClose={() => { setIsCompanyModalOpen(false); setIsAddingCompany(false); }} company={isAddingCompany ? null : companies.find(c => c.id.toString() === selectedCompanyId)} onSuccess={fetchCompanies} />
             <DraftTemplateModal isOpen={isDraftModalOpen} onClose={() => setIsDraftModalOpen(false)} company={companies.find(c => c.id.toString() === selectedCompanyId)} campaignId={selectedCampaignId} onSuccess={fetchCompanies} />
+            <SendOutreachModal isOpen={isSendOutreachModalOpen} onClose={() => setIsSendOutreachModalOpen(false)} onSubmit={triggerSendOutreach} campaignName={campaigns.find(c => c.id.toString() === (outreachCampaignId || selectedCampaignId)?.toString())?.name || 'Your Database'} campaignId={outreachCampaignId || selectedCampaignId} />
+            <OutreachStatusModal isOpen={isOutreachStatusModalOpen} onClose={() => setIsOutreachStatusModalOpen(false)} lead={selectedOutreachStatusLead} />
 
             {syncStatus && (
                 <div className="fixed inset-0 z-[100] flex items-center justify-center p-6 bg-midnight/80 backdrop-blur-xl animate-in duration-300">

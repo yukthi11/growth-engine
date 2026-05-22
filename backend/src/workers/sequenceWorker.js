@@ -25,9 +25,11 @@ const sequenceWorker = new Worker(
             await client.query('BEGIN');
 
             const enrollmentRes = await client.query(`
-                SELECT e.*, l.email_address, l.phone, l.business_name, l.contact_name, l.is_blacklisted
+                SELECT e.*, l.email_address, l.phone, l.business_name, l.contact_name, l.is_blacklisted,
+                       c.email as company_email, c.smtp_password
                 FROM lead_enrollments e
                 JOIN leads l ON e.lead_id = l.id
+                JOIN companies c ON l.company_id = c.id
                 WHERE e.id = $1 AND e.status = 'active'
             `, [enrollmentId]);
 
@@ -67,7 +69,9 @@ const sequenceWorker = new Worker(
                     email: enrollment.email_address,
                     subject: currentStep.subject || 'Automated Outreach',
                     message: currentStep.body,
-                    leadData: { business_name: enrollment.business_name, contact_name: enrollment.contact_name }
+                    leadData: { business_name: enrollment.business_name, contact_name: enrollment.contact_name },
+                    companyEmail: enrollment.company_email,
+                    smtpPassword: enrollment.smtp_password
                 });
             } else if (currentStep.type === 'whatsapp' && enrollment.phone) {
                 await whatsappQueue.add(`whatsapp-${messageId}`, {

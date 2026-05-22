@@ -5,6 +5,13 @@ const { sendWhatsAppMessage, getConnectionStatus, isRegisteredUser } = require('
 const { notifyCampaignComplete } = require('../services/replyHandler');
 const { deleteMockup } = require('../lib/r2');
 
+let failureReasonColumnReady = false;
+async function ensureFailureReasonColumn() {
+    if (failureReasonColumnReady) return;
+    await pool.query("ALTER TABLE messages ADD COLUMN IF NOT EXISTS failure_reason TEXT");
+    failureReasonColumnReady = true;
+}
+
 /**
  * Random Delay between 45 and 90 seconds
  */
@@ -16,6 +23,7 @@ connection.connect().catch(() => { /* already connecting */ });
 console.log('📡 [WhatsApp Worker] LISTENING — Waiting for outreach jobs...');
 
 const whatsappWorker = new Worker('whatsapp-send-v2', async (job) => {
+    await ensureFailureReasonColumn();
     const { lead_id, message_id, campaign_id, media_url } = job.data;
     console.log(`[WhatsApp Worker] Processing Job ${job.id} for lead ${lead_id}`);
 
@@ -66,12 +74,20 @@ const whatsappWorker = new Worker('whatsapp-send-v2', async (job) => {
     try {
         // TEST MODE Support: If in test mode, check the test phone number instead
         const IS_TEST = (process.env.TEST_MODE || '').trim().toLowerCase() === 'true';
-        const targetPhone = IS_TEST ? (process.env.TEST_PHONE || lead.phone) : lead.phone;
+        if (IS_TEST && !process.env.TEST_PHONE) {
+            throw new Error("SECURITY HALT: TEST_MODE is enabled but TEST_PHONE is missing in .env. Outreach aborted to prevent real-time delivery.");
+        }
+
+        const targetPhone = IS_TEST ? process.env.TEST_PHONE : lead.phone;
 
         // [STABILITY FIX] Skip numbers that aren't on WhatsApp
         const registered = await isRegisteredUser(targetPhone);
         if (!registered) {
             console.log(`[WhatsApp Worker] ❌ Number ${targetPhone} is NOT on WhatsApp. Skipping.`);
+            await pool.query(
+                "UPDATE messages SET status = 'failed', failure_reason = $2 WHERE id = $1",
+                [message_id, 'Number is not registered on WhatsApp']
+            );
             await pool.query("UPDATE leads SET status='rejected', rejection_reason='Not on WhatsApp' WHERE id=$1", [lead_id]);
             return;
         }
@@ -105,17 +121,11 @@ const whatsappWorker = new Worker('whatsapp-send-v2', async (job) => {
 
         await sendWhatsAppMessage(lead.phone, message.content || message.message_text, finalMediaUrl);
 
-        // Clean up R2 storage to save space after sending
-        if (finalMediaUrl) {
-            try {
-                await deleteMockup(lead_id);
-            } catch (cleanupErr) {
-                console.warn(`[WhatsApp Worker] Failed to clean up mockup for lead ${lead_id}:`, cleanupErr.message);
-            }
-        }
+        // We do NOT clean up R2 storage here anymore because emails rely on these URLs to be persistent.
+        // If we delete the mockup, any previously sent email will have a broken image.
 
         // Success updates
-        await pool.query('UPDATE messages SET status=$1, sent_at=NOW() WHERE id=$2', ['sent', message_id]);
+        await pool.query('UPDATE messages SET status=$1, sent_at=NOW(), failure_reason = NULL WHERE id=$2', ['sent', message_id]);
         await pool.query('UPDATE leads SET status=$1 WHERE id=$2', ['messaged', lead_id]);
 
         // Increment daily counter
@@ -136,6 +146,10 @@ const whatsappWorker = new Worker('whatsapp-send-v2', async (job) => {
         console.log(`[WhatsApp Worker] Successfully messaged lead ${lead_id}`);
     } catch (err) {
         console.error(`[WhatsApp Worker] Send failed:`, err.message);
+        await pool.query(
+            "UPDATE messages SET status = 'failed', failure_reason = $2 WHERE id = $1",
+            [message_id, err.message?.slice(0, 500) || 'Unknown WhatsApp delivery failure']
+        ).catch(() => {});
         throw err; // Trigger BullMQ retry
     }
 }, {

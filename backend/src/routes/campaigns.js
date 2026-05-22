@@ -179,24 +179,89 @@ router.post('/:id/bulk-send', async (req, res) => {
         // [SELF-HEALING] Reset any 'stuck' queued leads to 'new' before dispatching
         // This fixes the issue where leads are marked 'queued' in DB but are missing in Redis
         const resetRes = await pool.query(
-            "UPDATE leads SET status = 'new' WHERE campaign_id = $1 AND status = 'queued' AND channel = $2",
-            [id, channel.toLowerCase()]
+            "UPDATE leads SET status = 'new' WHERE campaign_id = $1 AND status = 'queued'",
+            [id]
         );
         if (resetRes.rowCount > 0) {
             console.log(`📡 [Self-Healing] Rescued ${resetRes.rowCount} leads from Limbo for campaign ${id}`);
         }
 
+        // [PRE-CHECK] Check if there are actually any leads available to send to
+        let leadCheckQuery = `
+            SELECT COUNT(id) FROM leads 
+            WHERE campaign_id = $1
+            -- AND status IN ('new', 'draft', 'queued') -- TEMPORARILY DISABLED FOR TESTING
+        `;
+        let checkValues = [id];
+
+        // For email-only, they need an email address. For whatsapp-only, they need a phone.
+        if (channel.toLowerCase() === 'email') {
+            leadCheckQuery += ` AND email_address IS NOT NULL`;
+        } else if (channel.toLowerCase() === 'whatsapp') {
+            leadCheckQuery += ` AND phone IS NOT NULL`;
+        }
+
+        const checkRes = await pool.query(leadCheckQuery, checkValues);
+        const availableLeads = parseInt(checkRes.rows[0].count, 10);
+
+        if (availableLeads === 0) {
+            return res.json({ 
+                message: "No fresh leads found! It looks like outreach was already sent, or no leads have valid contact info for this channel." 
+            });
+        }
+
         // 1. Return immediately to the UI
-        res.json({ message: `🚀 [Human-Like Dispatch Started] Pacing ${channel} outreach for campaign ${id}. You'll see progress in real-time in the Inbox/Dashboard.` });
+        res.json({ message: `🚀 [Human-Like Dispatch Started] Queuing outreach for ${availableLeads} leads via ${channel}. You'll see progress in real-time!` });
 
         // 2. Start background dispatch
-        bulkDispatch(id, channel.toLowerCase(), companyId).catch(err => {
-            console.error('🔥 [Bulk Dispatch CRASHED]:', err.message);
-        });
+        if (channel.toLowerCase() === 'all') {
+            bulkDispatch(id, 'whatsapp', companyId).catch(err => {
+                console.error('🔥 [Bulk Dispatch WhatsApp CRASHED]:', err.message);
+            });
+            bulkDispatch(id, 'email', companyId).catch(err => {
+                console.error('🔥 [Bulk Dispatch Email CRASHED]:', err.message);
+            });
+        } else {
+            bulkDispatch(id, channel.toLowerCase(), companyId).catch(err => {
+                console.error('🔥 [Bulk Dispatch CRASHED]:', err.message);
+            });
+        }
 
     } catch (err) {
         console.error(err);
         res.status(500).json({ error: 'Failed to initiate bulk dispatch' });
+    }
+});
+
+/**
+ * GET /campaigns/:id/outreach-progress
+ * Fetch real-time progress of the outreach queue
+ */
+router.get('/:id/outreach-progress', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const progressQuery = `
+            SELECT 
+                COUNT(*) as total_dispatched,
+                SUM(CASE WHEN m.status = 'pending' THEN 1 ELSE 0 END) as queued,
+                SUM(CASE WHEN m.status = 'sent' THEN 1 ELSE 0 END) as completed,
+                SUM(CASE WHEN m.status = 'failed' THEN 1 ELSE 0 END) as failed
+            FROM messages m
+            JOIN leads l ON m.lead_id = l.id
+            WHERE l.campaign_id = $1 AND m.message_type = 'first_outreach'
+        `;
+        const result = await pool.query(progressQuery, [id]);
+        const stats = result.rows[0];
+        
+        res.json({
+            dispatched: parseInt(stats.total_dispatched) || 0,
+            queued: parseInt(stats.queued) || 0,
+            completed: parseInt(stats.completed) || 0,
+            failed: parseInt(stats.failed) || 0
+        });
+    } catch (err) {
+        console.error('Progress tracking failed:', err);
+        res.status(500).json({ error: 'Failed to fetch progress' });
     }
 });
 

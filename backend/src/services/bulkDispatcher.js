@@ -15,7 +15,7 @@ async function bulkDispatch(campaignId, channel, companyId) {
             FROM leads l
             JOIN companies c ON l.company_id = c.id
             WHERE l.campaign_id = $1 
-              AND l.status IN ('new', 'draft', 'queued')
+              -- AND l.status IN ('new', 'draft', 'queued') -- TEMPORARILY DISABLED FOR TESTING
               ${isEmail ? 'AND l.email_address IS NOT NULL' : 'AND l.phone IS NOT NULL'}
         `;
         
@@ -31,27 +31,68 @@ async function bulkDispatch(campaignId, channel, companyId) {
                 // This ensures "Testing I'm a bot" is used instead of stale lead-level drafts.
                 let contentSource = 'Default';
                 let content = '';
+                let emailSubject = 'New Message';
 
-                if (lead.whatsapp_template && lead.whatsapp_template.trim().length > 0) {
-                    content = lead.whatsapp_template.replace(/\{\{business_name\}\}/g, lead.business_name);
-                    contentSource = 'Company Master Blueprint';
-                } else if (lead.outreach_draft) {
-                    content = lead.outreach_draft;
-                    contentSource = 'Individual Lead Draft';
+                // Fetch company info first so we can check if it's Growth Engine
+                const companyRes = await pool.query('SELECT * FROM companies WHERE id = $1', [companyId]);
+                const company = companyRes.rows[0];
+                const isGrowthEngine = company?.name?.trim().toLowerCase() === 'growth engine';
+
+                if (isGrowthEngine) {
+                    const { resolveOutreachByPillar } = require('../ai/pillarMessages');
+                    // If gap_pillar is missing, we explicitly pass 'default' so it triggers the fallback message!
+                    const resolved = resolveOutreachByPillar(lead.gap_pillar || 'default', lead.business_name, '');
+                    
+                    if (channel === 'whatsapp') {
+                        content = resolved.whatsapp;
+                        contentSource = `Pillar (WhatsApp): ${lead.gap_pillar || 'default'}`;
+                    } else if (channel === 'email') {
+                        content = resolved.email.body;
+                        emailSubject = resolved.email.subject;
+                        contentSource = `Pillar (Email): ${lead.gap_pillar || 'default'}`;
+                    }
+                } else if (channel === 'whatsapp') {
+                    if (lead.outreach_draft && lead.outreach_draft.trim().length > 0) {
+                        content = lead.outreach_draft;
+                        contentSource = 'Individual Lead Draft';
+                    } else if (company?.whatsapp_template && company.whatsapp_template.trim().length > 0) {
+                        content = company.whatsapp_template.replace(/\{\{business_name\}\}/g, lead.business_name);
+                        contentSource = 'Company Master Blueprint';
+                    }
+                } else if (channel === 'email') {
+                    if (company?.email_body_template && company.email_body_template.trim().length > 0) {
+                        content = company.email_body_template.replace(/\{\{business_name\}\}/g, lead.business_name);
+                        emailSubject = company.email_subject_template || emailSubject;
+                        contentSource = 'Company Email Blueprint';
+                    } else if (lead.outreach_draft && lead.outreach_draft.trim().length > 0) {
+                        content = lead.outreach_draft; 
+                        contentSource = 'Individual Lead Draft Fallback';
+                    }
+                }
+
+                // International Routing: Drop WhatsApp if not an Indian number
+                const isIndianPhone = lead.phone && String(lead.phone).startsWith('+91');
+                if (channel === 'whatsapp' && !isIndianPhone) {
+                    console.log(`[Bulk Dispatch] Dropping lead ${lead.id} from WhatsApp queue because phone is not +91 (International)`);
+                    continue; // Skip this lead entirely for WhatsApp
                 }
 
                 console.log(`[Bulk Dispatch DEBUG] Lead: ${lead.id}, Source: ${contentSource}, Match: ${lead.business_name}`);
 
-                // REPLACE mockup_url ONLY if it is a 'presence' pillar (no website)
-                let finalMediaUrl = (lead.gap_pillar === 'presence') ? lead.mockup_url : null;
+                // Use mockup_url if it exists, regardless of pillar
+                let finalMediaUrl = lead.mockup_url || null;
 
-                if (channel === 'whatsapp' && content) {
-                    // For WhatsApp, we attach the image directly and use text as caption
-                    content = content.replace(/\{\{mockup_url\}\}/g, '').trim();
-                } else if (content && finalMediaUrl) {
-                    content = content.replace(/\{\{mockup_url\}\}/g, finalMediaUrl);
-                } else if (content) {
-                    content = content.replace(/\{\{mockup_url\}\}/g, ''); // strip it if null
+                if (channel === 'whatsapp') {
+                    if (content) {
+                        // For WhatsApp, we attach the image directly and use text as caption, so strip placeholder
+                        content = content.replace(/\{\{mockup_url\}\}/g, '').trim();
+                    }
+                } else if (channel === 'email') {
+                    // For Email, if we already have the URL, replace it. 
+                    // IF we DON'T have the URL, we LEAVE {{mockup_url}} intact so emailWorker can JIT generate it!
+                    if (content && finalMediaUrl) {
+                        content = content.replace(/\{\{mockup_url\}\}/g, finalMediaUrl);
+                    }
                 }
 
                 console.log(`[Bulk Dispatch DEBUG] Final Content: "${content?.substring(0, 50)}..."`);
@@ -72,14 +113,18 @@ async function bulkDispatch(campaignId, channel, companyId) {
                         const { Queue } = require('bullmq');
                         const { connection } = require('../config/redis');
                         const emailQueue = new Queue('emailQueue', { connection });
+                        
+                        let senderEmail = company.email;
+                        let senderPassword = company.smtp_password;
+                        
                         await emailQueue.add('send-email', {
                             messageId: messageRes.rows[0].id,
                             email: lead.email_address,
-                            subject: company.email_subject_template || 'New Message',
-                            message: company.email_body_template || content,
+                            subject: emailSubject,
+                            message: content,
                             leadData: lead,
-                            companyEmail: company.email_sender,
-                            smtpPassword: company.smtp_password,
+                            companyEmail: senderEmail,
+                            smtpPassword: senderPassword,
                             mediaUrl: finalMediaUrl || company.email_media_url
                         }, { attempts: 3, backoff: { type: 'exponential', delay: 30000 } });
                     }

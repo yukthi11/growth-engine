@@ -34,7 +34,7 @@ class SheetsEngine {
         this.headers = [
             "Lead ID", "Business Name", "Phone", "Email", "Website",
             "Full Address", "Business Gap", "Source", "Intent Match %",
-            "Warmth Tier", "Status", "Strategy Pitch", "Gap Pillar", "Vertical", "Full Outreach DNA", "Last Synced At"
+            "Warmth Tier", "Outreach Status", "Status", "Outreach Message", "Strategy Pitch", "Gap Pillar", "Vertical", "Last Synced At"
         ];
     }
 
@@ -59,6 +59,16 @@ class SheetsEngine {
         }
 
         return baseGap;
+    }
+
+    getOutreachStatus(lead) {
+        const status = (lead.status || 'new').toLowerCase();
+        if (status === 'rejected') return 'REJECTED';
+        if (status === 'queued') return 'QUEUED';
+        if (['messaged', 'contacted', 'replied', 'interested', 'not_interested', 'pricing', 'inquiry', 'unclear', 'closed', 'converted'].includes(status)) {
+            return 'MESSAGED';
+        }
+        return 'NOT SENT';
     }
 
     async createSpreadsheet(companyName) {
@@ -107,11 +117,12 @@ class SheetsEngine {
                 lead.source,
                 `${lead.intent_score || 0}%`,
                 (lead.tier || 'New').toUpperCase(),
+                this.getOutreachStatus(lead),
                 (lead.status || 'new').toUpperCase(),
+                lead.outreach_draft || '',
                 lead.gap_pitch || '',
                 (lead.gap_pillar || '').toUpperCase(),
                 lead.gap_vertical || '',
-                lead.outreach_draft || '',
                 new Date().toISOString().split('T')[0]
             ]);
 
@@ -121,6 +132,31 @@ class SheetsEngine {
                     range: `${campaignName}!A2`,
                     valueInputOption: 'RAW',
                     requestBody: { values: rows }
+                });
+            }
+
+            // STEP 5: Apply Auto-Wrapping to the entire sheet
+            const spreadsheet = await this.sheets.spreadsheets.get({ spreadsheetId });
+            const sheet = spreadsheet.data.sheets.find(s => s.properties.title === campaignName);
+            if (sheet) {
+                await this.sheets.spreadsheets.batchUpdate({
+                    spreadsheetId,
+                    requestBody: {
+                        requests: [
+                            {
+                                repeatCell: {
+                                    range: { sheetId: sheet.properties.sheetId },
+                                    cell: {
+                                        userEnteredFormat: {
+                                            wrapStrategy: 'WRAP',
+                                            verticalAlignment: 'TOP'
+                                        }
+                                    },
+                                    fields: 'userEnteredFormat(wrapStrategy,verticalAlignment)'
+                                }
+                            }
+                        ]
+                    }
                 });
             }
 
@@ -155,6 +191,45 @@ class SheetsEngine {
                     }
                 });
                 console.log(`[SheetsEngine] ✅ Tab "${title}" created.`);
+
+                // Fetch again to get the new sheetId
+                const updatedSpreadsheet = await this.sheets.spreadsheets.get({ spreadsheetId });
+                const newSheet = updatedSpreadsheet.data.sheets.find(s => s.properties.title === title);
+                const sheetId = newSheet.properties.sheetId;
+
+                // Apply conditional formatting for Outreach Status column (Index 10 = Column K)
+                await this.sheets.spreadsheets.batchUpdate({
+                    spreadsheetId,
+                    requestBody: {
+                        requests: [
+                            {
+                                addConditionalFormatRule: {
+                                    rule: {
+                                        ranges: [{ sheetId, startColumnIndex: 10, endColumnIndex: 11, startRowIndex: 1 }],
+                                        booleanRule: {
+                                            condition: { type: 'TEXT_EQ', values: [{ userEnteredValue: 'MESSAGED' }] },
+                                            format: { backgroundColor: { red: 0.85, green: 0.93, blue: 0.83 } } // Light Green
+                                        }
+                                    },
+                                    index: 0
+                                }
+                            },
+                            {
+                                addConditionalFormatRule: {
+                                    rule: {
+                                        ranges: [{ sheetId, startColumnIndex: 10, endColumnIndex: 11, startRowIndex: 1 }],
+                                        booleanRule: {
+                                            condition: { type: 'TEXT_EQ', values: [{ userEnteredValue: 'REJECTED' }] },
+                                            format: { backgroundColor: { red: 0.96, green: 0.8, blue: 0.8 } } // Light Red
+                                        }
+                                    },
+                                    index: 1
+                                }
+                            }
+                        ]
+                    }
+                });
+                console.log(`[SheetsEngine] 🎨 Conditional formatting applied to Outreach Status column.`);
             }
         } catch (error) {
             console.error(`[SheetsEngine] ❌ ensureSheetExists FAILED:`, error.message);

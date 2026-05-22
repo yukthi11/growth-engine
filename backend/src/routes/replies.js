@@ -30,7 +30,7 @@ router.get('/', async (req, res) => {
                     (SELECT intent FROM replies r2 WHERE r2.lead_id = combined.lead_id ORDER BY created_at DESC LIMIT 1) as latest_intent,
                     (SELECT message FROM replies r3 WHERE r3.lead_id = combined.lead_id ORDER BY created_at DESC LIMIT 1) as latest_message
                 FROM (
-                    SELECT lead_id, created_at FROM messages WHERE status = 'sent'
+                    SELECT lead_id, created_at FROM messages WHERE status IN ('sent', 'failed')
                     UNION ALL
                     SELECT lead_id, created_at FROM replies
                 ) combined
@@ -45,7 +45,21 @@ router.get('/', async (req, res) => {
                 cl.latest_activity as created_at,
                 cl.msg_count as reply_count,
                 cl.latest_intent as intent,
-                cl.latest_message as message
+                cl.latest_message as message,
+                EXISTS (
+                    SELECT 1
+                    FROM messages m
+                    WHERE m.lead_id = l.id AND m.status = 'failed'
+                ) AS has_failed_delivery,
+                (
+                    SELECT m2.failure_reason
+                    FROM messages m2
+                    WHERE m2.lead_id = l.id
+                      AND m2.status = 'failed'
+                      AND m2.failure_reason IS NOT NULL
+                    ORDER BY m2.created_at DESC
+                    LIMIT 1
+                ) AS latest_failed_reason
             FROM leads l
             JOIN conversational_leads cl ON l.id = cl.lead_id
             WHERE l.company_id = $1
@@ -135,10 +149,15 @@ router.post('/manual-reply/:leadId', async (req, res) => {
         let messagePrefix = "";
 
         if (IS_TEST) {
-            targetPhone = process.env.TEST_PHONE || phone;
-            targetEmail = process.env.TEST_EMAIL || email_address;
+            // Strict enforcement: Never fall back to real lead data if TEST_MODE is active
+            if (channel === 'whatsapp' && !process.env.TEST_PHONE) return res.status(400).json({ error: 'TEST_MODE active but TEST_PHONE is missing' });
+            if (channel === 'email' && !process.env.TEST_EMAIL) return res.status(400).json({ error: 'TEST_MODE active but TEST_EMAIL is missing' });
+
+            targetPhone = process.env.TEST_PHONE;
+            targetEmail = process.env.TEST_EMAIL;
+            
             messagePrefix = "[TEST] ";
-            console.log(`[TEST MODE REDIRECT] Original: ${phone}/${email_address} -> Target: ${targetPhone}/${targetEmail}`);
+            console.log(`[TEST MODE REDIRECT] Manual reply routed to test target: ${targetPhone}/${targetEmail}`);
         }
 
         const now = new Date();
@@ -158,15 +177,8 @@ router.post('/manual-reply/:leadId', async (req, res) => {
             const cleanMessage = message.replace(/{{mockup_url}}/g, '').trim();
             await sendWhatsAppMessage(targetPhone, `${messagePrefix}${cleanMessage}`, mediaUrl);
 
-            // Cleanup R2 storage if a mockup was sent
-            if (mediaUrl) {
-                const { deleteMockup } = require('../lib/r2');
-                try {
-                    await deleteMockup(leadId);
-                } catch (cleanupErr) {
-                    console.warn(`[Manual Reply] Cleanup failed for lead ${leadId}:`, cleanupErr.message);
-                }
-            }
+            // We do NOT clean up R2 storage here anymore because emails rely on these URLs to be persistent.
+            // If we delete the mockup, any previously sent email will have a broken image.
         } else if (channel === 'email') {
             if (!targetEmail) return res.status(400).json({ error: 'No email address for lead' });
             
@@ -175,7 +187,10 @@ router.post('/manual-reply/:leadId', async (req, res) => {
                 'SELECT c.email as company_email, c.smtp_password FROM leads l JOIN companies c ON l.company_id = c.id WHERE l.id = $1',
                 [leadId]
             );
-            const sender = senderRes.rows[0] || {};
+            const sender = senderRes.rows[0];
+            if (!sender || !sender.company_email || !sender.smtp_password) {
+                return res.status(400).json({ error: 'Company has no email credentials. System fallback email is disabled.' });
+            }
 
             const { addEmailJob } = require('../queue/emailQueue');
             await addEmailJob({
@@ -184,8 +199,8 @@ router.post('/manual-reply/:leadId', async (req, res) => {
                 email: targetEmail,
                 subject: subject || `${messagePrefix}Growth Engine Update`,
                 message: message,
-                companyEmail: sender.company_email || process.env.SMTP_USER,
-                smtpPassword: sender.smtp_password || process.env.SMTP_PASSWORD,
+                companyEmail: sender.company_email,
+                smtpPassword: sender.smtp_password,
                 mediaUrl: mediaUrl // Pass the visual proof URL to the email worker
             });
         }
@@ -238,4 +253,3 @@ router.post('/sync/:leadId', async (req, res) => {
 });
 
 module.exports = router;
-

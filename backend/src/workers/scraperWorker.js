@@ -112,8 +112,18 @@ async function upsertGoldenRecord(goldenRecord, campaignId, companyId = 1) {
         }
 
         if (outreachMessage) {
-            // Dynamic Channel Routing: Fallback to email if no phone number exists
-            const preferredChannel = goldenRecord.phone?.e164 ? 'whatsapp' : (goldenRecord.email?.address ? 'email' : 'whatsapp');
+            // Dynamic Channel Routing: WhatsApp for India, Email for International
+            let preferredChannel = 'whatsapp';
+            const isIndianPhone = goldenRecord.phone?.e164 && goldenRecord.phone.e164.startsWith('+91');
+            
+            if (isIndianPhone) {
+                preferredChannel = 'whatsapp';
+            } else if (goldenRecord.email?.address) {
+                preferredChannel = 'email';
+            } else {
+                // If international and no email, we assign email anyway so the dispatcher drops it gracefully
+                preferredChannel = 'email'; 
+            }
 
             await pool.query(`
                 INSERT INTO messages (lead_id, message_type, content, status, channel, message_text)
@@ -267,8 +277,8 @@ async function runSource(source, query, campaignId = 1, job = { id: 'manual' }, 
     // GATE: autoOutreach is the hard outer switch. If OFF, we never enter the AI layer at all —
     // pure scraper mode: contacts collected, AI untouched, maximum performance.
     let finalLeads = [];
-    if (autoOutreach && autoEnrich) {
-        logger.log(`[INTELLIGENCE] Enriching ${filteredRecords.length} leads via AI (Gap Analysis + Outreach Draft, batch size: 5)...`);
+    if (autoEnrich) {
+        logger.log(`[INTELLIGENCE] Enriching ${filteredRecords.length} leads (Batch size: 5)...`);
         const BATCH_SIZE = 5;
         for (let i = 0; i < filteredRecords.length; i += BATCH_SIZE) {
             // Check for cancellation
@@ -283,7 +293,7 @@ async function runSource(source, query, campaignId = 1, job = { id: 'manual' }, 
                 const batchResults = await Promise.allSettled(
                     batch.map(lead => runIntelligence(
                         { ...lead, company_id: companyId },
-                        { autoOutreach, browser: sharedBrowser }
+                        { autoOutreach, browser: sharedBrowser } // autoOutreach is passed down to optionally skip Gap AI
                     ))
                 );
                 
@@ -298,10 +308,7 @@ async function runSource(source, query, campaignId = 1, job = { id: 'manual' }, 
             }
         }
     } else {
-        const reason = !autoOutreach
-            ? 'Outreach toggle is OFF — Pure Scraper Mode. Contacts collected, AI layer skipped.'
-            : 'Auto-Enrich is OFF — Skipping AI enrichment.';
-        logger.log(`[INTELLIGENCE] ${reason} (${filteredRecords.length} leads)`);
+        logger.log(`[INTELLIGENCE] Auto-Enrich is OFF — Skipping AI enrichment. (${filteredRecords.length} leads)`);
         finalLeads = filteredRecords.map(l => ({ ...l, intelligence: { tier: 'cold', intentScore: 0 } }));
     }
 
