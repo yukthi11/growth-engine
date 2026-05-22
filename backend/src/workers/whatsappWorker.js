@@ -4,6 +4,7 @@ const pool = require('../config/db');
 const { sendWhatsAppMessage, getConnectionStatus, isRegisteredUser } = require('../services/whatsappClient');
 const { notifyCampaignComplete } = require('../services/replyHandler');
 const { deleteMockup } = require('../lib/r2');
+const { outreachLimiter } = require('../config/rateLimits');
 
 let failureReasonColumnReady = false;
 async function ensureFailureReasonColumn() {
@@ -57,7 +58,7 @@ const whatsappWorker = new Worker('whatsapp-send-v2', async (job) => {
     }
 
     // Daily Cap Enforcement (Redis)
-    const DAILY_CAP = parseInt(process.env.WA_DAILY_CAP) || 75;
+    const DAILY_CAP = parseInt(process.env.WA_DAILY_CAP) || 100;
     const currentCount = await connection.get('wa_sends_today') || 0;
     
     if (parseInt(currentCount) >= DAILY_CAP) {
@@ -154,6 +155,7 @@ const whatsappWorker = new Worker('whatsapp-send-v2', async (job) => {
     }
 }, {
     connection,
+    limiter: outreachLimiter,
     attempts: 3,
     backoff: {
         type: 'exponential',

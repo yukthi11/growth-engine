@@ -4,6 +4,7 @@ const { sendEmail } = require('../services/emailService');
 const pool = require('../config/db');
 const path = require('path');
 require('dotenv').config({ path: path.resolve(__dirname, '../../../.env') });
+const { outreachLimiter } = require('../config/rateLimits');
 
 let failureReasonColumnReady = false;
 async function ensureFailureReasonColumn() {
@@ -152,7 +153,10 @@ const emailWorker = new Worker(
             throw error;
         }
     },
-    { connection }
+    { 
+        connection,
+        limiter: outreachLimiter
+    }
 );
 
 module.exports = emailWorker;
