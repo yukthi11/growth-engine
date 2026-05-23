@@ -61,10 +61,10 @@ class BaseScraper {
     /**
      * Helper to run the scraper lifecycle.
      */
-    async run(query, deep = false) {
+    async run(query, deep = false, options = {}) {
         try {
             await this.init();
-            const results = await this.scrape(query, deep);
+            const results = await this.scrape(query, deep, options);
             return results;
         } catch (error) {
             this.logError(`Critical error in ${this.name}`, error);

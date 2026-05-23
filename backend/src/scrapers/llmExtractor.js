@@ -90,6 +90,20 @@ async function _withRetry(fn, label = 'LLM', maxRetries = 3) {
     throw lastErr;
 }
 
+// ─── Hard Timeout Wrapper ─────────────────────────────────────────────────────
+function withTimeout(promise, ms, label = 'LLM API') {
+    let timeoutId;
+    const timeoutPromise = new Promise((_, reject) => {
+        timeoutId = setTimeout(() => {
+            reject(new Error(`${label} forcibly timed out after ${ms}ms`));
+        }, ms);
+    });
+    return Promise.race([
+        promise.finally(() => clearTimeout(timeoutId)),
+        timeoutPromise
+    ]);
+}
+
 // ─── Shared Text Helpers ──────────────────────────────────────────────────────
 function cleanTextResponse(text) {
     return text.replace(/```[a-z]*\n?/gi, '').replace(/```/gi, '').trim();
@@ -221,7 +235,7 @@ async function callLLM(customPrompt, options = {}) {
                     model: "gemini-flash-latest",
                     generationConfig: isJson ? { responseMimeType: "application/json" } : undefined
                 });
-                const result = await model.generateContent(customPrompt);
+                const result = await withTimeout(model.generateContent(customPrompt), 15000, 'Gemini API');
                 return cleanTextResponse(result.response.text());
             }, 'Gemini/Flash-Latest');
 
@@ -229,24 +243,24 @@ async function callLLM(customPrompt, options = {}) {
             if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY not configured in env');
             await _acquireToken('groq');
             return await _withRetry(async () => {
-                const completion = await groq.chat.completions.create({
+                const completion = await withTimeout(groq.chat.completions.create({
                     messages: [{ role: 'user', content: customPrompt }],
                     model: GROQ_MODEL,
                     temperature: 0,
                     response_format: isJson ? { type: "json_object" } : undefined
-                });
+                }), 15000, 'Groq API');
                 return cleanTextResponse(completion.choices[0]?.message?.content || '');
             }, `Groq/${GROQ_MODEL}`);
 
         case 'openai':
             if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not configured in env');
             return await _withRetry(async () => {
-                const completion = await openai.chat.completions.create({
+                const completion = await withTimeout(openai.chat.completions.create({
                     messages: [{ role: 'user', content: customPrompt }],
                     model: 'gpt-4o-mini',
                     temperature: 0,
                     response_format: isJson ? { type: "json_object" } : undefined
-                });
+                }), 15000, 'OpenAI API');
                 return cleanTextResponse(completion.choices[0]?.message?.content || '');
             }, 'OpenAI/gpt-4o-mini');
 
@@ -259,7 +273,7 @@ async function callLLM(customPrompt, options = {}) {
                     messages: [{ role: 'user', content: customPrompt }],
                     model: modelName,
                     temperature: 0,
-                });
+                }, { timeout: 30000 });
                 return cleanTextResponse(completion.choices[0]?.message?.content || '');
             }, `Ollama/${modelName}`);
     }

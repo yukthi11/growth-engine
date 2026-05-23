@@ -3,6 +3,7 @@ const { randomDelay, humanScroll } = require('../utils/humanBehavior');
 const { waitForDomain } = require('../utils/domainRateLimiter');
 const { fastPrompt } = require('./llmExtractor'); // Tier 2: city neighborhood discovery
 const { parseQueryIntent, isStrictMatch, tagProximityLead } = require('../utils/queryIntent');
+const pool = require('../config/db');
 
 /**
  * Google Maps Scraper
@@ -14,12 +15,12 @@ class GoogleMapsScraper extends BaseScraper {
         super('GoogleMaps');
     }
 
-    async scrape(query, deep = false) {
+    async scrape(query, deep = false, options = {}) {
         const { isProximity, location: expectedLocation, hasLocation } = parseQueryIntent(query);
 
         if (deep) {
             this.log(`Deep Discovery enabled. Splitting "${query}" into hyper-local sub-queries...`);
-            return await this.scrapeDeep(query, expectedLocation);
+            return await this.scrapeDeep(query, expectedLocation, options);
         }
         return await this.scrapeSingle(query, false, expectedLocation, isProximity, hasLocation);
     }
@@ -216,9 +217,9 @@ class GoogleMapsScraper extends BaseScraper {
      * Uses phi3 (Tier 2) to discover the top commercial neighborhoods for any city.
      * Falls back to static Bangalore list if LLM is unavailable or city is unclear.
      */
-    async _discoverAreas(city) {
+    async _discoverAreas(city, excludedAreas = []) {
         // Static fallback for Bangalore (most common use-case, no LLM needed)
-        const BANGALORE_FALLBACK = [
+        let BANGALORE_FALLBACK = [
             'MG Road', 'Brigade Road', 'Residency Road', 'Richmond Town', 'Vasanth Nagar',
             'Indiranagar', 'Domlur', 'Marathahalli', 'Brookefield', 'Whitefield', 'Bellandur',
             'Sarjapur Road', 'Banaswadi', 'Kammanahalli', 'Jayanagar', 'JP Nagar',
@@ -226,6 +227,11 @@ class GoogleMapsScraper extends BaseScraper {
             'Rajajinagar', 'Vijayanagar', 'Hebbal', 'Yelahanka', 'RT Nagar',
             'Nagavara', 'Hennur', 'Mahadevapura', 'Panathur', 'Varthur'
         ];
+        
+        if (excludedAreas.length > 0) {
+            const lowerEx = new Set(excludedAreas.map(a => a.toLowerCase()));
+            BANGALORE_FALLBACK = BANGALORE_FALLBACK.filter(a => !lowerEx.has(a.toLowerCase()));
+        }
 
         const isBangalore = /bangalore|bengaluru/i.test(city);
         if (isBangalore) return { areas: BANGALORE_FALLBACK, city: 'Bangalore' };
@@ -245,6 +251,7 @@ STRICT RULES:
 - NO COMBINED NAMES (e.g., if you have "Tempelhof-Schöneberg", return them as two separate items "Tempelhof", "Schöneberg").
 - Each item must be a distinct district.
 - If the city is small, return at least 3 items.
+${excludedAreas.length > 0 ? `- STRICT EXCLUSION: Do NOT include ANY of the following neighborhoods as they have already been searched: ${JSON.stringify(excludedAreas)}` : ''}
 
 Example: ["Mitte", "Charlottenburg", "Kreuzberg", "Neukölln"]
 
@@ -271,12 +278,30 @@ City: ${city}
      * Splits query into hyper-local areas to bypass Google's 9-result guest wall.
      * Supports any city worldwide via dynamic LLM neighborhood discovery.
      */
-    async scrapeDeep(query, manualLocation = null) {
+    async scrapeDeep(query, manualLocation = null, options = {}) {
+        const { campaignId } = options;
         // Extract city from query: "dance classes in Bangkok" → "Bangkok"
         const cityMatch = query.match(/(?:in|near|at|around|close to|nearby)\s+([\w\s]+?)(?:,|$)/i);
         const detectedCity = cityMatch ? cityMatch[1].trim() : (manualLocation || 'Bangalore');
 
-        const { areas: targetAreas, city } = await this._discoverAreas(detectedCity);
+        // Fetch already searched areas from PostgreSQL
+        let excludedAreas = [];
+        if (campaignId) {
+            try {
+                const res = await pool.query(
+                    'SELECT area_name FROM discovery_history WHERE campaign_id = $1 AND city ILIKE $2',
+                    [campaignId, detectedCity]
+                );
+                excludedAreas = res.rows.map(r => r.area_name);
+                if (excludedAreas.length > 0) {
+                    this.log(`Found ${excludedAreas.length} previously searched areas for ${detectedCity}. Excluding them from LLM discovery.`);
+                }
+            } catch (err) {
+                this.logError('Failed to fetch discovery_history from DB', err);
+            }
+        }
+
+        const { areas: targetAreas, city } = await this._discoverAreas(detectedCity, excludedAreas);
         const combinedLeads = [];
         const seenNames = new Set();
 
@@ -304,6 +329,18 @@ City: ${city}
                 if (!seenNames.has(lead.businessName)) {
                     seenNames.add(lead.businessName);
                     combinedLeads.push(lead);
+                }
+            }
+
+            // Record area as searched
+            if (campaignId) {
+                try {
+                    await pool.query(
+                        'INSERT INTO discovery_history (campaign_id, city, area_name) VALUES ($1, $2, $3) ON CONFLICT DO NOTHING',
+                        [campaignId, city, area]
+                    );
+                } catch (err) {
+                    this.logError(`Failed to save discovery_history for area ${area}`, err);
                 }
             }
 
