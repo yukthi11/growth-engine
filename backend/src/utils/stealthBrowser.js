@@ -78,7 +78,16 @@ async function launchBrowser() {
 }
 
 async function closeBrowser(browser) {
-    if (browser) await browser.close();
+    if (browser) {
+        try {
+            await Promise.race([
+                browser.close(),
+                new Promise(r => setTimeout(r, 5000))
+            ]);
+        } catch (e) {
+            console.error('[Browser] Force close error:', e.message);
+        }
+    }
 }
 
 module.exports = {

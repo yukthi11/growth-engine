@@ -213,7 +213,7 @@ async function runSource(source, query, campaignId = 1, job = { id: 'manual' }, 
     }
     const scraper = getScraper(source);
     scraper.cancelCheck = () => isCancelled(jobId); // inject cancel poller
-    const businesses = await scraper.run(query, deep);
+    const businesses = await scraper.run(query, deep, { campaignId });
 
     if (businesses.length === 0) {
         logger.log(`[Scraper Worker] ${source}: No businesses found.`);
@@ -291,10 +291,16 @@ async function runSource(source, query, campaignId = 1, job = { id: 'manual' }, 
             try {
                 sharedBrowser = await launchBrowserInstance();
                 const batchResults = await Promise.allSettled(
-                    batch.map(lead => runIntelligence(
-                        { ...lead, company_id: companyId },
-                        { autoOutreach, browser: sharedBrowser } // autoOutreach is passed down to optionally skip Gap AI
-                    ))
+                    batch.map(lead => Promise.race([
+                        runIntelligence(
+                            { ...lead, company_id: companyId },
+                            { autoOutreach, browser: sharedBrowser } // autoOutreach is passed down to optionally skip Gap AI
+                        ),
+                        new Promise(resolve => setTimeout(() => {
+                            logger.error(`[Scraper Worker] Hard timeout triggered for lead: ${lead.businessName}`);
+                            resolve(lead); // Return raw lead safely if pipeline freezes
+                        }, 120000))
+                    ]))
                 );
                 
                 const batchLeads = batchResults
