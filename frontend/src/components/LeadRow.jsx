@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { updateLead } from '../api/client';
+import MockupPreviewModal from './MockupPreviewModal';
 
 const VALID_STATUSES = ['new', 'queued', 'messaged', 'contacted', 'replied', 'interested', 'not_interested', 'pricing', 'inquiry', 'unclear', 'closed', 'rejected', 'converted', 'ignored'];
 
@@ -23,6 +24,7 @@ const STATUS_THEMES = {
 const LeadRow = ({ lead, onUpdate, onViewMessages, onEdit, onDelete, onOpenOutreachStatus }) => {
     const [isUpdating, setIsUpdating] = useState(false);
     const [showGap, setShowGap] = useState(false);
+    const [showMockupModal, setShowMockupModal] = useState(false);
     const isOutreachSent = ['messaged', 'contacted', 'replied', 'interested', 'closed', 'converted'].includes(lead.status);
     const isOutreachQueued = lead.status === 'queued';
 
@@ -134,9 +136,65 @@ const LeadRow = ({ lead, onUpdate, onViewMessages, onEdit, onDelete, onOpenOutre
             <td className="px-6 py-4 border-r border-white/5 last:border-0 min-w-[300px]">
                 <div className="space-y-3">
                     <div className="flex flex-col gap-1">
-                        <div className="text-[11px] text-slate-500 font-medium line-clamp-2 italic leading-relaxed" title={lead.outreach_draft}>
-                            {lead.outreach_draft || 'No draft generated...'}
-                        </div>
+                        {/* Gap Keyword Badges */}
+                        {(() => {
+                            const GAP_LABELS = {
+                                noWebsite:        { label: 'No Website',       color: 'bg-rose-500/15 text-rose-400 border-rose-500/25' },
+                                brokenWebsite:    { label: 'Broken Website',   color: 'bg-rose-500/15 text-rose-400 border-rose-500/25' },
+                                noWhatsApp:       { label: 'No WhatsApp',      color: 'bg-amber-500/15 text-amber-400 border-amber-500/25' },
+                                noSSL:            { label: 'No SSL',           color: 'bg-amber-500/15 text-amber-400 border-amber-500/25' },
+                                inactiveSocial:   { label: 'Inactive Social',  color: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/25' },
+                                noEmailCapture:   { label: 'No Email Capture', color: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/25' },
+                                noLeadForm:       { label: 'No Lead Form',     color: 'bg-yellow-500/15 text-yellow-400 border-yellow-500/25' },
+                                noBookingSystem:  { label: 'No Booking',       color: 'bg-slate-500/15 text-slate-400 border-slate-500/25' },
+                                fewReviews:       { label: 'Few Reviews',      color: 'bg-slate-500/15 text-slate-400 border-slate-500/25' },
+                                lowRating:        { label: 'Low Rating',       color: 'bg-rose-500/15 text-rose-400 border-rose-500/25' },
+                                slowWebsite:      { label: 'Slow Website',     color: 'bg-orange-500/15 text-orange-400 border-orange-500/25' },
+                                noChat:           { label: 'No Chat',          color: 'bg-slate-500/15 text-slate-400 border-slate-500/25' },
+                                noSchema:         { label: 'No Schema',        color: 'bg-slate-500/15 text-slate-400 border-slate-500/25' },
+                                missingGBPFields: { label: 'Missing GBP',      color: 'bg-slate-500/15 text-slate-400 border-slate-500/25' },
+                            };
+
+                            // Prefer gap_top array; fall back to scanning gap_details object
+                            let keys = [];
+                            if (Array.isArray(lead.gap_top) && lead.gap_top.length > 0) {
+                                keys = lead.gap_top;
+                            } else if (lead.gap_details && typeof lead.gap_details === 'object') {
+                                keys = Object.entries(lead.gap_details)
+                                    .filter(([, v]) => v === true)
+                                    .map(([k]) => k)
+                                    .slice(0, 3);
+                            }
+
+                            if (keys.length === 0) {
+                                return (
+                                    <div className="text-[9px] text-slate-600 font-bold uppercase italic opacity-50 mb-1">
+                                        No gaps detected
+                                    </div>
+                                );
+                            }
+
+                            return (
+                                <div className="flex flex-wrap gap-1 mb-1">
+                                    {keys.map((key) => {
+                                        const def = GAP_LABELS[key];
+                                        if (!def) return null;
+                                        const isWebsiteGap = key === 'noWebsite' || key === 'brokenWebsite';
+                                        
+                                        return (
+                                            <span
+                                                key={key}
+                                                onClick={() => { if (isWebsiteGap) setShowMockupModal(true); }}
+                                                className={`px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border transition-all ${def.color} ${isWebsiteGap ? 'cursor-pointer hover:scale-105 active:scale-95 shadow-sm' : ''}`}
+                                                title={isWebsiteGap ? 'Click to generate website mockup preview' : ''}
+                                            >
+                                                {def.label} {isWebsiteGap && '✨'}
+                                            </span>
+                                        );
+                                    })}
+                                </div>
+                            );
+                        })()}
                         <div className="mt-1 flex items-center gap-2">
                             <button
                                 onClick={() => setShowGap(!showGap)}
@@ -274,6 +332,22 @@ const LeadRow = ({ lead, onUpdate, onViewMessages, onEdit, onDelete, onOpenOutre
                     <Icons.Delete />
                 </button>
             </td>
+
+            {/* Modals rendered outside the table cell flow */}
+            {showMockupModal && (
+                <td className="p-0 border-0 m-0">
+                    <MockupPreviewModal 
+                        lead={lead} 
+                        isOpen={showMockupModal} 
+                        onClose={() => setShowMockupModal(false)}
+                        onMockupGenerated={(url) => {
+                            // Update parent list so the mockup URL is cached locally
+                            lead.mockup_url = url; 
+                            onUpdate();
+                        }}
+                    />
+                </td>
+            )}
         </tr>
     );
 };

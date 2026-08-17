@@ -7,7 +7,11 @@ const WARNING_COOLDOWN = 30000;
 const getRedis = () => {
     if (!redis) {
         const REDIS_URL = process.env.REDIS_URL || `redis://${process.env.REDIS_HOST || 'localhost'}:${process.env.REDIS_PORT || 6379}`;
-        redis = new Redis(REDIS_URL, { lazyConnect: true });
+        redis = new Redis(REDIS_URL, { 
+            lazyConnect: true, 
+            enableOfflineQueue: false, 
+            maxRetriesPerRequest: 1 
+        });
         redis.on('error', (err) => {
             const now = Date.now();
             if (err.code === 'ECONNREFUSED') {

@@ -117,18 +117,69 @@ router.patch('/:id', async (req, res) => {
     }
 });
 
+/**
+ * GET /:id/geo-stats
+ * Returns campaign-level location aggregation for the geospatial command center.
+ * Groups leads by campaign, and extracts location data from campaign names & lead locations.
+ * Includes per-channel pending message counts (WhatsApp vs Email).
+ */
+router.get('/:id/geo-stats', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const result = await pool.query(`
+            SELECT 
+                c.id as campaign_id,
+                c.name as campaign_name,
+                COUNT(DISTINCT l.id)::int as total_leads,
+                COUNT(DISTINCT l.id) FILTER (WHERE l.status IN ('outreach', 'contacted', 'messaged'))::int as contacted,
+                COUNT(DISTINCT l.id) FILTER (WHERE l.status = 'new')::int as pending,
+                (SELECT COUNT(*)::int FROM replies r WHERE r.lead_id = ANY(ARRAY_AGG(DISTINCT l.id)) AND r.intent = 'interested') as responded,
+                MODE() WITHIN GROUP (ORDER BY l.location_normalized) as top_location,
+                COUNT(DISTINCT m.id) FILTER (WHERE m.status = 'pending' AND m.channel = 'whatsapp')::int as pending_whatsapp,
+                COUNT(DISTINCT m.id) FILTER (WHERE m.status = 'pending' AND m.channel = 'email')::int as pending_email,
+                COUNT(DISTINCT m.id) FILTER (WHERE m.status = 'sent' AND m.channel = 'whatsapp')::int as sent_whatsapp,
+                COUNT(DISTINCT m.id) FILTER (WHERE m.status = 'sent' AND m.channel = 'email')::int as sent_email,
+                COUNT(DISTINCT m.id) FILTER (WHERE m.status = 'failed')::int as failed_messages
+            FROM campaigns c
+            LEFT JOIN leads l ON l.campaign_id = c.id AND l.company_id = $1
+            LEFT JOIN messages m ON m.lead_id = l.id
+            WHERE c.company_id = $1
+            GROUP BY c.id, c.name
+            HAVING COUNT(DISTINCT l.id) > 0
+            ORDER BY COUNT(DISTINCT l.id) DESC
+        `, [id]);
+
+        res.json(result.rows);
+    } catch (err) {
+        console.error('[Geo Stats Error]:', err.message);
+        res.status(500).json({ error: 'Failed to fetch geo stats' });
+    }
+});
+
 router.get('/:id/stats', async (req, res) => {
     const { id } = req.params;
     try {
         const statsResult = await pool.query(`
             SELECT 
                 COUNT(*)::int as total_leads,
-                COUNT(*) FILTER (WHERE status IN ('outreach', 'contacted'))::int as active_sequences,
+                COUNT(*) FILTER (WHERE status IN ('queued', 'messaged', 'replied'))::int as active_sequences,
                 (SELECT COUNT(*)::int FROM replies r JOIN leads l ON r.lead_id = l.id WHERE l.company_id = $1 AND r.intent = 'interested') as interested_replies
             FROM leads
             WHERE company_id = $1
         `, [id]);
         
+        // Fetch recent keywords used in discovery
+        const keywordsResult = await pool.query(`
+            SELECT DISTINCT ON (query) query, created_at 
+            FROM discovery_queue 
+            WHERE company_id = $1 
+            ORDER BY query, created_at DESC 
+            LIMIT 5
+        `, [id]);
+        
+        // Sort back by created_at desc since DISTINCT ON forces an order by the distinct column first
+        const recentKeywords = keywordsResult.rows.sort((a, b) => new Date(b.created_at) - new Date(a.created_at));
+
         const stats = statsResult.rows[0];
         const successRate = stats.total_leads > 0 
             ? Math.round((stats.interested_replies / stats.total_leads) * 100) 
@@ -136,7 +187,8 @@ router.get('/:id/stats', async (req, res) => {
 
         res.json({
             ...stats,
-            success_rate: successRate
+            success_rate: successRate,
+            recent_keywords: recentKeywords.map(k => k.query)
         });
     } catch (err) {
         console.error(err);

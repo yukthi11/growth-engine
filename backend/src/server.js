@@ -7,12 +7,10 @@ const campaignsRoute = require('./routes/campaigns');
 const messagesRoute = require('./routes/messages');
 const discoveryRoute = require('./routes/discovery');
 const path = require('path');
-// const { runAutoPilot } = require('./scheduler/autoPilot');
 const { startEmailMonitor, setIO: setEmailIO } = require('./scheduler/emailKillSwitch');
 const repliesRoute = require('./routes/replies');
 const whatsappRoute = require('./routes/whatsapp');
 const { initWhatsApp } = require('./services/whatsappClient');
-// require('./scheduler/scraperScheduler'); // Wakes up the automation loops
 require('dotenv').config({ path: path.resolve(__dirname, '../../.env') });
 const http = require('http');
 const { Server } = require('socket.io');
@@ -52,6 +50,7 @@ app.use(express.json());
 // Serve local uploads publicly for embedded email media
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 const r2Route = require('./routes/r2');
+const proposalsRoute = require('./routes/proposals');
 
 app.use('/leads', leadsRoute);
 app.use('/companies', companiesRoute);
@@ -60,6 +59,7 @@ app.use('/messages', messagesRoute);
 app.use('/discovery', discoveryRoute);
 app.use('/replies', repliesRoute);
 app.use('/whatsapp', whatsappRoute);
+app.use('/proposals', proposalsRoute);
 app.use('/api/r2', r2Route);
 
 app.get('/', async (req, res) => {

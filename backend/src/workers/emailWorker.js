@@ -134,10 +134,14 @@ const emailWorker = new Worker(
                 htmlPayload
             );
 
-            // 2. Update DB
+            // 2. Update DB — mark message sent AND lead as messaged to prevent re-send
             await pool.query(
                 "UPDATE messages SET status = 'sent', sent_at = NOW(), failure_reason = NULL WHERE id = $1",
                 [messageId]
+            );
+            await pool.query(
+                "UPDATE leads SET status = 'messaged' WHERE id = $1",
+                [leadData.id]
             );
 
             console.log(`[Email] Successfully delivered to ${targetEmail}`);

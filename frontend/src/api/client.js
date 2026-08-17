@@ -31,6 +31,11 @@ export const getCompanyStats = async (id) => {
     return response.data;
 };
 
+export const getGeoStats = async (id) => {
+    const response = await client.get(`/companies/${id}/geo-stats`);
+    return response.data;
+};
+
 export const getLeads = async (companyId, page = 1, limit = 20, campaignId = null, search = '') => {
     const response = await client.get('/leads', {
         params: {
@@ -78,6 +83,11 @@ export const deleteCampaign = async (id) => {
     return response.data;
 };
 
+export const updateCampaign = async (id, data) => {
+    const response = await client.patch(`/campaigns/${id}`, data);
+    return response.data;
+};
+
 export const sendCampaignOutreach = async (campaignId, channel, companyId) => {
     const response = await client.post(`/campaigns/${campaignId}/bulk-send`, {
         channel,
@@ -88,6 +98,11 @@ export const sendCampaignOutreach = async (campaignId, channel, companyId) => {
 
 export const getOutreachProgress = async (campaignId) => {
     const response = await client.get(`/campaigns/${campaignId}/outreach-progress`);
+    return response.data;
+};
+
+export const getOutreachSummary = async (campaignId) => {
+    const response = await client.get(`/campaigns/${campaignId}/outreach-summary`);
     return response.data;
 };
 
@@ -161,6 +176,11 @@ export const suggestReply = async (leadId, replyText) => {
     return response.data;
 };
 
+export const generateMockup = async (leadId) => {
+    const response = await client.post(`/leads/${leadId}/generate-mockup`);
+    return response.data;
+};
+
 export const draftEmail = async (leadId) => {
     const response = await client.post(`/leads/${leadId}/draft-email`);
     return response.data;
@@ -178,6 +198,16 @@ export const syncCampaignToSheets = async (companyId, campaignId) => {
 
 export const syncWorkspaceToSheets = async (companyId) => {
     const response = await client.post(`/companies/${companyId}/sync`);
+    return response.data;
+};
+
+export const generateProposal = async (data) => {
+    const response = await client.post('/proposals/generate', data);
+    return response.data;
+};
+
+export const getProposalAutofill = async (leadId) => {
+    const response = await client.get(`/proposals/autofill/${leadId}`);
     return response.data;
 };
 

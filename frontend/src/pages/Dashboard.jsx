@@ -7,7 +7,9 @@ import AddLeadModal from '../components/AddLeadModal';
 import CreateCampaignModal from '../components/CreateCampaignModal';
 import SequenceVisualizer from '../components/SequenceVisualizer';
 import StatsOverview from '../components/StatsOverview';
+import MapCommandCenter from '../components/CommandCenter/MapCommandCenter';
 import InboxPage from './InboxPage';
+import ProposalWriter from './ProposalWriter';
 import { io } from 'socket.io-client';
 import { DotLottieReact } from '@lottiefiles/dotlottie-react';
 import SideNav from '../components/SideNav';
@@ -29,6 +31,7 @@ const Dashboard = () => {
     const [companies, setCompanies] = useState([]);
     const [selectedCompanyId, setSelectedCompanyId] = useState('');
     const [campaigns, setCampaigns] = useState([]);
+    const campaignsRef = useRef([]);          // always holds latest campaigns for socket closures
     const [selectedCampaignId, setSelectedCampaignId] = useState('');
     const [leads, setLeads] = useState([]);
     const [pendingRepliesCount, setPendingRepliesCount] = useState(0);
@@ -147,9 +150,9 @@ const Dashboard = () => {
         setSocket(s);
         s.on('new_reply', () => setPendingRepliesCount(prev => prev + 1));
         s.on('campaign_complete', (data) => {
-            // Find the campaign name from our current list
-            const campaign = campaigns.find(c => c.id.toString() === data.campaignId.toString());
-            setCompletedCampaignName(campaign?.name || 'Your Campaign');
+            // Use ref so we always have the latest campaigns list (avoids stale closure)
+            const campaign = campaignsRef.current.find(c => c.id.toString() === data.campaignId.toString());
+            setCompletedCampaignName(campaign?.name || 'Campaign');
             setIsCampaignCompleteOpen(true);
             fetchDashboardHub(); // Refresh stats
             fetchLeads(page); // Refresh status in table
@@ -237,7 +240,11 @@ const Dashboard = () => {
     };
 
     const fetchCampaigns = async () => {
-        try { const data = await getCampaigns(selectedCompanyId); setCampaigns(data); }
+        try {
+            const data = await getCampaigns(selectedCompanyId);
+            setCampaigns(data);
+            campaignsRef.current = data;
+        }
         catch (err) { console.error('Fetch campaigns failed:', err); }
     };
 
@@ -324,6 +331,11 @@ const Dashboard = () => {
         } finally {
             setIsDeletingCampaign(false);
         }
+    };
+
+    // Update campaign name locally so the dropdown reflects the new name instantly
+    const handleRenameCampaign = (id, newName) => {
+        setCampaigns(prev => prev.map(c => String(c.id) === String(id) ? { ...c, name: newName } : c));
     };
 
     const handleToggleAutoEnrich = async () => {
@@ -735,6 +747,7 @@ const Dashboard = () => {
                             <h2 className="text-3xl font-black text-white italic tracking-tighter uppercase leading-none">Performance Intelligence</h2>
                         </div>
                         <StatsOverview stats={stats} />
+                        <MapCommandCenter companyId={selectedCompanyId} />
                     </div>
                 );
             case 'inbox':
@@ -747,6 +760,8 @@ const Dashboard = () => {
                     campaignId={selectedCampaignId}
                     campaigns={campaigns}
                 />;
+            case 'proposals':
+                return <ProposalWriter companyId={selectedCompanyId} />;
             default: return null;
         }
     };
@@ -781,7 +796,7 @@ const Dashboard = () => {
                             </div>
                             <div className="flex items-center gap-3 ml-4 border-l border-white/5 pl-8">
                                 <span className="text-[10px] font-black uppercase text-slate-700 tracking-widest leading-none">Campaign</span>
-                                <CampaignSelector campaigns={campaigns} selectedCampaign={selectedCampaignId} onChange={setSelectedCampaignId} onDelete={handleDeleteCampaign} isDeleting={isDeletingCampaign} minimal={true} />
+                                <CampaignSelector campaigns={campaigns} selectedCampaign={selectedCampaignId} onChange={setSelectedCampaignId} onDelete={handleDeleteCampaign} onRenamed={handleRenameCampaign} isDeleting={isDeletingCampaign} minimal={true} />
                                 <button onClick={() => setIsCampaignModalOpen(true)} title="Architect New Campaign" className="p-2 border border-white/10 rounded-xl bg-white/5 hover:bg-emerald-600/10 text-slate-500 hover:text-emerald-400 transition-all">
                                     <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M12 6v6m0 0v6m0-6h6m-6 0H6" /></svg>
                                 </button>

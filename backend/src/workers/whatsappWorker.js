@@ -57,12 +57,13 @@ const whatsappWorker = new Worker('whatsapp-send-v2', async (job) => {
         throw new Error(`Lead ${lead_id} has no phone number`);
     }
 
-    // Daily Cap Enforcement (Redis)
-    const DAILY_CAP = parseInt(process.env.WA_DAILY_CAP) || 100;
-    const currentCount = await connection.get('wa_sends_today') || 0;
+    // Daily Cap Enforcement (Redis) - Per Company (Number)
+    const DAILY_CAP = parseInt(process.env.WA_DAILY_CAP) || 50;
+    const redisKey = `wa_sends_today:${lead.company_id}`;
+    const currentCount = await connection.get(redisKey) || 0;
     
     if (parseInt(currentCount) >= DAILY_CAP) {
-        console.warn(`[WhatsApp Worker] Daily limit (${DAILY_CAP}) reached. Job ${job.id} postponed.`);
+        console.warn(`[WhatsApp Worker] Daily limit (${DAILY_CAP}) reached for company ${lead.company_id}. Job ${job.id} postponed.`);
         throw new Error('Daily limit reached');
     }
 
@@ -129,8 +130,11 @@ const whatsappWorker = new Worker('whatsapp-send-v2', async (job) => {
         await pool.query('UPDATE messages SET status=$1, sent_at=NOW(), failure_reason = NULL WHERE id=$2', ['sent', message_id]);
         await pool.query('UPDATE leads SET status=$1 WHERE id=$2', ['messaged', lead_id]);
 
-        // Increment daily counter
-        await connection.incr('wa_sends_today');
+        // Increment daily counter per company and ensure it resets every 24 hours
+        const newCount = await connection.incr(redisKey);
+        if (newCount === 1) {
+            await connection.expire(redisKey, 86400); // 24-hour window
+        }
 
         // Check for campaign completion
         if (campaign_id) {

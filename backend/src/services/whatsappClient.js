@@ -61,11 +61,15 @@ async function initWhatsApp() {
     }
   }, 30000);
 
-  // QR Code — print to terminal for scanning
+  // QR Code — stored for the API; only print to terminal if WHATSAPP_PRINT_QR=true
   client.on('qr', (qr) => {
     qrCode = qr;
-    console.log('\n[WhatsApp] Scan the QR code below:\n');
-    qrcode.generate(qr, { small: true });
+    if (process.env.WHATSAPP_PRINT_QR === 'true') {
+      console.log('\n[WhatsApp] Scan the QR code below:\n');
+      qrcode.generate(qr, { small: true });
+    } else {
+      console.log('[WhatsApp] QR ready — open the app or set WHATSAPP_PRINT_QR=true to print here.');
+    }
   });
 
   // Connected and ready
@@ -185,13 +189,28 @@ async function sendWhatsAppMessage(phone, message, mediaUrl = null) {
     let textResult = null;
     let mediaResult = null;
 
-    // STEP 1: Send the Text Pitch first
+    // STEP 1: Simulate Human Typing
+    console.log(`[WhatsApp] Simulating human typing...`);
+    try {
+      await chat.sendStateTyping();
+      // Simulate 50ms per character, capped at 8 seconds max to not stall the worker
+      const typingDuration = Math.min(message.length * 50, 8000);
+      await new Promise(r => setTimeout(r, typingDuration));
+    } catch (e) {
+      console.warn(`[WhatsApp] Could not send typing state: ${e.message}`);
+    }
+
     console.log(`[WhatsApp] Sending Text Pitch...`);
     textResult = await chat.sendMessage(message);
 
     // STEP 2: Send the Media as a separate follow-up bubble
     if (mediaUrl) {
       try {
+        // Simulate time taken to click 'attach file' and select image (3 to 6 seconds)
+        const mediaDelay = Math.floor(Math.random() * 3000) + 3000;
+        console.log(`[WhatsApp] Waiting ${mediaDelay}ms before attaching media...`);
+        await new Promise(r => setTimeout(r, mediaDelay));
+
         console.log(`[WhatsApp] Fetching media from ${mediaUrl}...`);
         const axios = require('axios');
         const response = await axios.get(mediaUrl, { responseType: 'arraybuffer' });

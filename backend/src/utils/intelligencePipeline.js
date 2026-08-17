@@ -1,6 +1,7 @@
 const { analyzeWebsite } = require('./websiteAnalyzer');
 const { scoreIntent } = require('./intentScorer');
 const { resolveOutreachByPillar } = require('../ai/pillarMessages');
+const { processGapIntelligence, computeGapsFromAnalysis } = require('../ai/gapMapper');
 
 /**
  * Runs the complete AI intelligence pipeline for a lead.
@@ -43,58 +44,53 @@ async function runIntelligence(lead, options = {}) {
             }
         }
 
-        // --- GAP INTELLIGENCE (AI) — skipped when autoOutreach is false ---
+        // --- GAP INTELLIGENCE — skipped when autoOutreach is false ---
         let gapData = null;
         if (autoOutreach) {
             try {
-                const { generalPrompt } = require('../scrapers/llmExtractor');
-                const { processGapIntelligence } = require('../ai/gapMapper');
-                
-                const aiPrompt = `
-You are an expert business growth consultant. Analyze this lead and their website profile to identify business gaps.
+                // Step 2a: Compute all binary gap flags deterministically (zero LLM tokens)
+                const computedGaps = computeGapsFromAnalysis(websiteAnalysis, lead.website);
 
-Lead Info:
-Name: ${lead.businessName}
+                // Step 2b: Ask LLM ONLY for the two fields that require genuine judgment:
+                // - vertical: which business category this lead belongs to
+                // - service_fit: a human-readable summary of why they need our services
+                // Everything else (scoring, pillar, topGaps) is derived from computedGaps in code.
+                const { generalPrompt } = require('../scrapers/llmExtractor');
+
+                const activeGapNames = Object.entries(computedGaps)
+                    .filter(([, v]) => v === true)
+                    .map(([k]) => k);
+
+                const slimPrompt = `You are a business growth consultant. Classify this lead.
+
+Business: ${lead.businessName}
 Category: ${lead.category || 'Local Business'}
 Location: ${lead.location_normalized || 'Unknown'}
 Has Website: ${!!lead.website}
+Detected Gaps: ${activeGapNames.length > 0 ? activeGapNames.join(', ') : 'None detected'}
+Tech Stack: ${websiteAnalysis?.techStack?.join(', ') || 'Unknown'}
+Has Social Presence: ${(websiteAnalysis?.hasSocialLinks?.length > 0) ? 'Yes' : 'No'}
 
-Website Analysis Data:
-${JSON.stringify(websiteAnalysis || {}, null, 2)}
-
-Return EXACTLY this JSON structure (do NOT include outreach_draft — gap detection only):
+Return ONLY this JSON (no extra text):
 {
-  "intent_score": 0,
-  "tier": "hot|warm|cold",
   "vertical": "fitness|restaurant|salon|clinic|education|realestate|retail|other",
-  "service_fit": "2 sentence summary of why they need our digital growth services",
-  "gap_pitch": "1 specific sentence about their actual gaps",
-  "pillar": "presence|reputation|automation|chatbot|ads",
-  "gaps": {
-    "noWebsite": ${!lead.website},
-    "brokenWebsite": false,
-    "noWhatsApp": ${!(websiteAnalysis?.hasWhatsapp)},
-    "noBookingSystem": false,
-    "fewReviews": false,
-    "lowRating": false,
-    "slowWebsite": false,
-    "noSSL": false,
-    "inactiveSocial": ${!(websiteAnalysis?.hasSocialLinks?.length > 0)},
-    "noEmailCapture": ${!(websiteAnalysis?.hasContactForm)},
-    "noLeadForm": ${!(websiteAnalysis?.hasContactForm)},
-    "noSchema": false,
-    "noChat": true,
-    "missingGBPFields": false
-  },
-  "topGaps": []
-}
-`;
-                const rawAiOutput = await generalPrompt(aiPrompt);
+  "service_fit": "2 sentence summary of why they need our digital growth services"
+}`;
+
+                const rawAiOutput = await generalPrompt(slimPrompt);
                 const jsonMatch = rawAiOutput.match(/\{[\s\S]*\}/);
-                if (jsonMatch) {
-                    const parsed = JSON.parse(jsonMatch[0]);
-                    gapData = processGapIntelligence(parsed);
-                }
+
+                const aiFields = jsonMatch ? JSON.parse(jsonMatch[0]) : {};
+
+                // Step 2c: Run processGapIntelligence with computed gaps + AI-classified fields merged
+                gapData = processGapIntelligence({
+                    gaps: computedGaps,
+                    vertical: aiFields.vertical || 'other',
+                    service_fit: aiFields.service_fit || '',
+                    gap_pitch: '',       // Removed — internal field, never sent to lead
+                    pillar: null         // Let gapMapper derive pillar from gap weights (more accurate)
+                });
+
             } catch (err) {
                 console.error('[Intelligence Pipeline] Gap AI failed:', err.message);
             }
@@ -102,22 +98,22 @@ Return EXACTLY this JSON structure (do NOT include outreach_draft — gap detect
             console.log(`[Intelligence Pipeline] Auto-Outreach is OFF. Skipping Gap AI for: ${lead.businessName}`);
         }
 
-        // Step 2: Intent Scoring (Fallback/Legacy)
+        // Step 3: Intent Scoring (Fallback/Legacy — used when Gap AI fails)
         const intentData = scoreIntent(lead, websiteAnalysis);
 
-        // Step 3: Resolve outreach from structured pillar messages (no AI required)
+        // Step 4: Resolve outreach from structured pillar messages (no AI required)
         const pillar = gapData?.gap_pillar || null;
         if (pillar) {
             const businessName = lead.businessName || lead.business_name || '';
             const location = lead.location_normalized || lead.location?.city || '';
-            const resolved = resolveOutreachByPillar(pillar, businessName, location);
+            const resolved = resolveOutreachByPillar(pillar, businessName, location, gapData?.gap_details);
             outreachDraft = { message: resolved.whatsapp };
         }
 
-        // Step 4: Return enriched lead
+        // Step 5: Return enriched lead
         return {
             ...lead,              // spread must come first
-            businessName: lead.businessName,  // // FIX - PRESERVE BUSINESS NAME
+            businessName: lead.businessName,  // FIX - PRESERVE BUSINESS NAME
             intelligence: {
                 websiteAnalysis,
                 intentScore: gapData ? gapData.intent_score : intentData.intentScore,

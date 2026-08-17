@@ -1,19 +1,9 @@
 const BaseScraper = require('./baseScraper');
 const GoogleMapsScraper = require('./googleMapsScraper');
 const JustdialScraper = require('./justdialScraper');
-// const IndiaMartScraper = require('./indiamartScraper');
-// const SulekhaScraper = require('./sulekhaScraper');
 const InstagramScraper = require('./instagramScraper');
 const FacebookScraper = require('./facebookScraper');
 const LinkedInScraper = require('./linkedinScraper');
-// const ArticleScraper = require('./articleScraper');
-// const YellowPagesScraper = require('./yellowpagesScraper');
-// const GrotalScraper = require('./grotalScraper');
-// const NearFoxScraper = require('./nearfoxScraper');
-// const TradeIndiaScraper = require('./tradeIndiaScraper');
-// const ExportersIndiaScraper = require('./exportersIndiaScraper');
-// const EtsyScraper = require('./etsyScraper');
-// const TravelTriangleScraper = require('./traveltriangleScraper');
 
 
 /**
@@ -26,21 +16,11 @@ const SCRAPERS = {
     // ── Directories ──────────────────────────────────
     'google_maps': () => new GoogleMapsScraper(),
     'justdial': () => new JustdialScraper(),
-    // 'indiamart': () => new IndiaMartScraper(),
-    // 'sulekha': () => new SulekhaScraper(),
-    // 'yellowpages': () => new YellowPagesScraper(),
-    // 'grotal': () => new GrotalScraper(),
-    // 'nearfox': () => new NearFoxScraper(),
-    // 'tradeindia': () => new TradeIndiaScraper(),
-    // 'exportersindia': () => new ExportersIndiaScraper(),
-    // 'etsy': () => new EtsyScraper(),
-    // 'traveltriangle': () => new TravelTriangleScraper(),
 
     // ── Social Media ─────────────────────────────────
     'facebook': () => new FacebookScraper(),
     'instagram': () => new InstagramScraper(),
     'linkedin': () => new LinkedInScraper(),
-    // 'article_explorer': () => new ArticleScraper(),
 };
 
 /**

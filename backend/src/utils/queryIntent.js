@@ -29,39 +29,48 @@ function parseQueryIntent(query) {
 function isStrictMatch(searchTargets, expectedLocation) {
     if (!expectedLocation) return true; // No location to check against = pass
 
-    const targets = Array.isArray(searchTargets) ? searchTargets : [searchTargets];
-    const expected = expectedLocation.toString().toLowerCase();
-    const normExpected = expected.replace(/[^a-z0-9]/g, '');
+    const targets = Array.isArray(searchTargets) ? searchTargets.filter(Boolean) : [searchTargets].filter(Boolean);
+    const expected = expectedLocation.toString().toLowerCase().trim();
 
+    // Combined target text for cross-field matching
+    const combinedTarget = targets.map(t => t.toString().toLowerCase()).join(' ');
+
+    // 1. Alias normalization (e.g. Bengaluru <-> Bangalore)
+    const normCombined = combinedTarget.replace(/\bbengaluru\b/g, 'bangalore');
+    const normExpected = expected.replace(/\bbengaluru\b/g, 'bangalore');
+
+    // 2. Exact or Substring match on raw text
+    if (normCombined.includes(normExpected) || normExpected.includes(normCombined)) return true;
+
+    // 3. Normalized alphanumeric match
+    const alphaCombined = normCombined.replace(/[^a-z0-9]/g, '');
+    const alphaExpected = normExpected.replace(/[^a-z0-9]/g, '');
+    if (alphaCombined && alphaExpected && (alphaCombined.includes(alphaExpected) || alphaExpected.includes(alphaCombined))) return true;
+
+    // 4. Token-level matching: strip state/country filler (e.g., "Karnataka", "India") to get primary location tokens
+    const stateCountryFilter = /\b(karnataka|maharashtra|tamil nadu|kerala|andhra pradesh|telangana|delhi|india|state)\b/gi;
+    const primaryLocation = normExpected.replace(stateCountryFilter, '').trim();
+
+    if (primaryLocation.length >= 3) {
+        const primaryAlpha = primaryLocation.replace(/[^a-z0-9]/g, '');
+        if (alphaCombined.includes(primaryAlpha)) return true;
+
+        const tokens = primaryLocation.split(/\s+/).filter(t => t.length >= 3);
+        if (tokens.length > 0 && tokens.every(token => normCombined.includes(token))) {
+            return true;
+        }
+    }
+
+    // 5. String similarity fallback against individual address/target parts
     for (const targetString of targets) {
-        if (!targetString) continue;
-
-        let target = targetString.toString().toLowerCase();
-        let currentExpected = expected;
-
-        // Alias normalization (e.g. Bengaluru <-> Bangalore)
-        target = target.replace(/\bbengaluru\b/g, 'bangalore');
-        currentExpected = currentExpected.replace(/\bbengaluru\b/g, 'bangalore');
-
-        const normTarget = target.replace(/[^a-z0-9]/g, '');
-        const normExpected = currentExpected.replace(/[^a-z0-9]/g, '');
-
-        // 1. Exact or Substring match on raw lowercase
-        if (target.includes(currentExpected) || currentExpected.includes(target)) return true;
-
-        // 2. Normalized alphanumeric match
-        if (normTarget && normExpected && (normTarget.includes(normExpected) || normExpected.includes(normTarget))) return true;
-
-        // 3. String similarity
-        // Only apply direct similarity if target is a short string (like localArea).
-        if (target.length < expected.length * 4) {
-            const score = stringSimilarity.compareTwoStrings(target, expected);
+        let target = targetString.toString().toLowerCase().replace(/\bbengaluru\b/g, 'bangalore');
+        if (target.length < normExpected.length * 4) {
+            const score = stringSimilarity.compareTwoStrings(target, normExpected);
             if (score > 0.75) return true;
         } else {
-            // For full addresses, try matching against individual comma-separated parts
             const parts = target.split(/[\s,]+/);
             for (const part of parts) {
-                if (part.length >= 3 && stringSimilarity.compareTwoStrings(part, expected) > 0.75) {
+                if (part.length >= 3 && stringSimilarity.compareTwoStrings(part, normExpected) > 0.75) {
                     return true;
                 }
             }

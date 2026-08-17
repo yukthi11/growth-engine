@@ -4,6 +4,10 @@ const { connection } = require('../config/redis');
 
 const whatsappQueue = new Queue('whatsapp-send-v2', { connection });
 
+// Maximum WhatsApp messages allowed per single bulk dispatch run.
+// This protects the sending number from being flagged/banned by WhatsApp.
+const WHATSAPP_BATCH_CAP = 50;
+
 async function bulkDispatch(campaignId, channel, companyId) {
     console.log(`--- ENGINE RESTART: DISPATCH V3 ACTIVE (Campaign ${campaignId}) ---`);
     
@@ -11,11 +15,11 @@ async function bulkDispatch(campaignId, channel, companyId) {
         // 1. Get all leads in this campaign that are in valid starting statuses
         const isEmail = channel === 'email';
         const leadQuery = `
-            SELECT l.id, l.phone, l.email_address, l.business_name, c.whatsapp_template, l.outreach_draft, l.mockup_url, l.gap_pillar
+            SELECT l.id, l.phone, l.email_address, l.business_name, c.whatsapp_template, l.outreach_draft, l.mockup_url, l.gap_pillar, l.gap_details
             FROM leads l
             JOIN companies c ON l.company_id = c.id
             WHERE l.campaign_id = $1 
-              -- AND l.status IN ('new', 'draft', 'queued') -- TEMPORARILY DISABLED FOR TESTING
+              AND l.status IN ('new', 'draft', 'queued')
               ${isEmail ? 'AND l.email_address IS NOT NULL' : 'AND l.phone IS NOT NULL'}
         `;
         
@@ -23,6 +27,14 @@ async function bulkDispatch(campaignId, channel, companyId) {
         const leads = leadsResult.rows;
         
         console.log(`[Bulk Dispatch] Found ${leads.length} leads to queue.`);
+
+        // Enforce per-run WhatsApp cap
+        if (!isEmail && leads.length > WHATSAPP_BATCH_CAP) {
+            console.warn(`[Bulk Dispatch] ⚠️  WhatsApp batch cap hit: ${leads.length} leads found but only ${WHATSAPP_BATCH_CAP} are allowed per run. Truncating to first ${WHATSAPP_BATCH_CAP}.`);
+        }
+
+        // Track how many WhatsApp messages we've queued this run
+        let whatsappQueuedCount = 0;
 
         for (const lead of leads) {
             try {
@@ -41,7 +53,8 @@ async function bulkDispatch(campaignId, channel, companyId) {
                 if (isGrowthEngine) {
                     const { resolveOutreachByPillar } = require('../ai/pillarMessages');
                     // If gap_pillar is missing, we explicitly pass 'default' so it triggers the fallback message!
-                    const resolved = resolveOutreachByPillar(lead.gap_pillar || 'default', lead.business_name, '');
+                    const gapDetails = typeof lead.gap_details === 'string' ? JSON.parse(lead.gap_details) : (lead.gap_details || {});
+                    const resolved = resolveOutreachByPillar(lead.gap_pillar || 'default', lead.business_name, '', gapDetails);
                     
                     if (channel === 'whatsapp') {
                         content = resolved.whatsapp;
@@ -77,7 +90,11 @@ async function bulkDispatch(campaignId, channel, companyId) {
                     continue; // Skip this lead entirely for WhatsApp
                 }
 
-                console.log(`[Bulk Dispatch DEBUG] Lead: ${lead.id}, Source: ${contentSource}, Match: ${lead.business_name}`);
+                // Hard cap: stop queuing WhatsApp once the batch limit is reached
+                if (channel === 'whatsapp' && whatsappQueuedCount >= WHATSAPP_BATCH_CAP) {
+                    console.error(`[Bulk Dispatch] 🚫 WhatsApp batch cap of ${WHATSAPP_BATCH_CAP} reached. Halting remaining leads for this run. Re-run to send the next batch.`);
+                    break;
+                }
 
                 // Use mockup_url if it exists, regardless of pillar
                 let finalMediaUrl = lead.mockup_url || null;
@@ -94,8 +111,6 @@ async function bulkDispatch(campaignId, channel, companyId) {
                         content = content.replace(/\{\{mockup_url\}\}/g, finalMediaUrl);
                     }
                 }
-
-                console.log(`[Bulk Dispatch DEBUG] Final Content: "${content?.substring(0, 50)}..."`);
 
                 // 2. Create the message record first
                 const messageRes = await pool.query(`
@@ -139,6 +154,7 @@ async function bulkDispatch(campaignId, channel, companyId) {
                         attempts: 3,
                         backoff: { type: 'exponential', delay: 30000 }
                     });
+                    whatsappQueuedCount++;
                 }
 
                 // 4. Update lead status to avoid double-queueing
@@ -149,7 +165,11 @@ async function bulkDispatch(campaignId, channel, companyId) {
             }
         }
         
-        console.log(`🏁 [Bulk Dispatch] Successfully enqueued ${leads.length} tasks.`);
+        const queuedLabel = channel === 'whatsapp' ? `${whatsappQueuedCount}/${leads.length} WhatsApp` : `${leads.length} email`;
+        console.log(`🏁 [Bulk Dispatch] Successfully enqueued ${queuedLabel} tasks.`);
+        if (channel === 'whatsapp' && whatsappQueuedCount >= WHATSAPP_BATCH_CAP) {
+            console.warn(`[Bulk Dispatch] ⚠️  Batch cap of ${WHATSAPP_BATCH_CAP} was hit. ${leads.length - whatsappQueuedCount} lead(s) were NOT queued this run.`);
+        }
     } catch (err) {
         console.error('❌ [Bulk Dispatch] Fatal error:', err.message);
     }

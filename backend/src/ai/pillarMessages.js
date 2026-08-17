@@ -31,22 +31,23 @@ const PILLAR_MESSAGES = {
 
         email: {
             subject: `Quick note about {{business_name}}`,
-            body: `Hi there,
+            body: `Hi,
 
-I'm Yukthi. I came across {{business_name}} on Google and I have to say, it looks like you're doing some genuinely great work.
+I came across {{business_name}} recently and it genuinely looks like you're building something great.
 
-I noticed you don't have a website up yet, so I went ahead and put together a quick preview of what one could look like for your business. You can view it here {{mockup_url}}
+While going through your online presence, I had a few ideas that could help better showcase the quality of what you already offer and make it easier for potential customers to discover you online.
 
-It's just a starting point, but having a proper digital foundation built with strong SEO principles positions you as the clear choice in your area. Long term, this means you start ranking at the top of local searches and capturing leads naturally, creating a steady, predictable flow of new business that works for you in the background.
+I actually put together a quick preview to illustrate what I mean:
+{{mockup_url}}
 
-I'd love to build this out properly for you if it feels right.
+Small improvements to the digital experience can quietly make a big difference in how confidently customers choose a business.
 
-Could you point me to the right person to have a quick chat?
+Thought it might be helpful to share.
 
-Thanks,
+Happy to walk you through a few ideas if you're interested.
+
 Yukthi
-+91 9108641490
-<a href="https://reviveyourbusiness.in/companies/revive-technology/" target="_blank" rel="noopener noreferrer">reviveyourbusiness.in</a>`
+<a href="https://reviveyourbusiness.in/companies/revive-technology/" target="_blank" rel="noopener noreferrer">Revive Technology</a>`
         }
     },
 
@@ -59,20 +60,20 @@ Yukthi
 
         email: {
             subject: `Quick note about {{business_name}}`,
-            body: `Hi there,
+            body: `Hi,
 
-I'm Yukthi. I came across {{business_name}} on Google and genuinely, it looks like you're doing some great work.
+I came across {{business_name}} recently and honestly, it looks like you're doing great work.
 
-One thing I noticed is that your reviews don't quite reflect the quality you're putting out. Most people check Google before deciding where to go, so when the review count is low it can make them hesitant, even when the actual experience is great.
+I had a thought while looking through your online presence. I feel like the experience customers probably have with your business could be showcased even more strongly online.
 
-I help businesses set up a simple automated system that collects reviews from happy customers after every visit or job. No chasing, no awkward asks. It just runs quietly and builds up over time.
+For many customers, reviews are the thing that gives them the confidence to reach out or visit in the first place. Businesses that consistently surface positive customer experiences tend to build trust much faster over time.
 
-Could you point me to the right person to have a quick chat about this?
+There are a few simple ways to encourage more of those happy customer experiences to naturally show up online without it feeling forced or awkward.
 
-Thanks,
+Thought it might be worth sharing a few ideas around this.
+
 Yukthi
-+91 9108641490
-<a href="https://reviveyourbusiness.in/companies/revive-technology/" target="_blank" rel="noopener noreferrer">reviveyourbusiness.in</a>`
+<a href="https://reviveyourbusiness.in/companies/revive-technology/" target="_blank" rel="noopener noreferrer">Revive Technology</a>`
         }
     },
 
@@ -85,20 +86,22 @@ Yukthi
 
         email: {
             subject: `Quick note about {{business_name}}`,
-            body: `Hi there,
+            body: `Hi,
 
-I'm Yukthi. I came across {{business_name}} on Google and it looks like you're doing some great work.
+I came across {{business_name}} recently and it looks like you're doing some really good work.
 
-I noticed it takes a little while to get back to customers on enquiries. Totally understandable when you're running a busy operation. The tricky part is that people searching online tend to reach out to a few places at once, and usually go with whoever gets back to them first.
+One thing I noticed is that there may be an opportunity to make customer enquiries and bookings feel even smoother on the online side.
 
-I help businesses set up WhatsApp automations that respond to enquiries instantly, around the clock. Your customers get an answer right away, and you're not glued to your phone. The leads that were quietly slipping through start converting instead.
+A lot of businesses are now putting simple systems in place that instantly handle common customer questions and enquiries, especially after business hours, so potential customers never feel left waiting.
 
-Could you point me to the right person to have a quick chat about this?
+The businesses doing this well tend to create a much smoother customer experience while also taking pressure off the team internally.
 
-Thanks,
+I think something like this could work really nicely for your business.
+
+Happy to share a few ideas if you'd like.
+
 Yukthi
-+91 9108641490
-<a href="https://reviveyourbusiness.in/companies/revive-technology/" target="_blank" rel="noopener noreferrer">reviveyourbusiness.in</a>`
+<a href="https://reviveyourbusiness.in/companies/revive-technology/" target="_blank" rel="noopener noreferrer">Revive Technology</a>`
         }
     },
 
@@ -107,7 +110,7 @@ Yukthi
      * Triggered by: inactiveSocial
      */
     ads: {
-        whatsapp: `Hi, I'm Yukthi! I came across {{business_name}} on Google and it looks like you're doing some great work. I noticed your social media has been a little quiet lately, and I can help get that going again with consistent content and local ads targeted at people in {{location}}. More people seeing what you do means more people walking through the door. Could you point me to the right person for this?`,
+        whatsapp: `Hi, I'm Yukthi! I came across {{business_name}} on Google and it looks like you're doing some great work. I had a quick look at your online presence, and I see a huge opportunity to bring in more local customers in {{location}} using consistent social media updates and targeted local ads. I help businesses handle their social content and run high-converting local ads end-to-end so you consistently show up in front of the right people. Could you point me to the right person for a quick chat?`,
 
         email: {
             subject: `Quick note about {{business_name}}`,
@@ -115,11 +118,11 @@ Yukthi
 
 I'm Yukthi. I came across {{business_name}} on Google and it looks like you're doing some great work.
 
-I noticed your social media has been a little quiet lately. It's one of those things that's easy to let slide when you're busy running the actual business. It does mean you're missing out on people in {{location}} who would genuinely love what you offer, they just haven't come across you yet.
+I was looking at your online presence and wanted to reach out. For many local businesses, having a highly active, fully optimized social media footprint and running targeted local ads is the single fastest way to attract new customers in {{location}} on autopilot. 
 
-I help businesses handle their social content and local ads end to end, so you're consistently showing up in front of the right people without it taking up your time.
+I help businesses handle their social media content, profile optimization, and local advertising end-to-end, so you consistently stay top-of-mind for customers in your area without it taking up your time.
 
-Could you point me to the right person to have a quick chat about this?
+Could you point me to the right person to have a quick, no-pressure chat about this?
 
 Thanks,
 Yukthi
@@ -217,7 +220,66 @@ Yukthi
  * @returns {{ whatsapp: string, email: { subject: string, body: string } }}
  */
 function resolveOutreachByPillar(pillar, businessName, location = '', extraData = {}) {
-    const template = PILLAR_MESSAGES[pillar] || PILLAR_MESSAGES.default;
+    let template = PILLAR_MESSAGES[pillar] || PILLAR_MESSAGES.default;
+
+    // Handle presence adaptive copy
+    if (pillar === 'presence') {
+        const noWebsite = extraData.noWebsite !== false; // Default to true (legacy/fallback if not provided)
+        if (!noWebsite) {
+            // Adaptive copy for when they HAVE a website but it has issues (broken, missing SSL, slow, etc.)
+            template = {
+                whatsapp: `Hi, I'm Yukthi! I came across {{business_name}} on Google and it looks like you're doing some great work. I noticed your website has a few issues loading or displaying properly, so I went ahead and put together a quick preview of how a modern, high-performing version could look for you. You can check it out here {{mockup_url}} Having a strong, secure digital foundation built with solid SEO principles ensures your business stays at the top of local searches. Could you point me to the right person for this?`,
+                email: {
+                    subject: `Improving the digital experience for {{business_name}}`,
+                    body: `Hi,
+
+I came across {{business_name}} recently and it genuinely looks like you're building something great.
+
+While going through your online presence, I noticed a few technical issues with your website (like security and page load speed) that might be making it harder for potential customers to confidently choose you.
+
+I actually put together a quick, modern preview to show how a secure, high-performing version could look:
+{{mockup_url}}
+
+Small improvements to the digital experience can quietly make a big difference in how confidently customers choose a business.
+
+Thought it might be helpful to share.
+
+Happy to walk you through a few ideas if you're interested.
+
+Yukthi
+<a href="https://reviveyourbusiness.in/companies/revive-technology/" target="_blank" rel="noopener noreferrer">Revive Technology</a>`
+                }
+            };
+        }
+    }
+
+    // Handle automation adaptive copy
+    if (pillar === 'automation') {
+        const noWhatsApp = extraData.noWhatsApp !== false; // Default to true (legacy/fallback if not provided)
+        if (!noWhatsApp) {
+            // Adaptive copy for when they ALREADY have WhatsApp, but lack lead/booking forms on website
+            template = {
+                whatsapp: `Hi, I'm Yukthi! I came across {{business_name}} on Google and it looks like you're doing some great work. I noticed you have WhatsApp setup, but you might be missing out on automated lead forms and booking capture on your website to automatically collect customer info 24/7. I can help set up an instant booking capture system that seamlessly connects with your existing setup. Could you point me to the right person for this?`,
+                email: {
+                    subject: `Smooth booking capture for {{business_name}}`,
+                    body: `Hi,
+
+I came across {{business_name}} recently and it looks like you're doing some really good work.
+
+One thing I noticed is that while you have a WhatsApp contact link, there may be an opportunity to make customer lead capture and bookings feel even smoother on your website.
+
+A lot of businesses are now putting simple automated capture systems in place that instantly save lead details and enquiries, especially after business hours, so potential customers never feel left waiting.
+
+I think something like this could work really nicely alongside your existing WhatsApp setup.
+
+Happy to share a few ideas if you'd like.
+
+Yukthi
+<a href="https://reviveyourbusiness.in/companies/revive-technology/" target="_blank" rel="noopener noreferrer">Revive Technology</a>`
+                }
+            };
+        }
+    }
 
     const replacements = {
         business_name: businessName || 'your business',

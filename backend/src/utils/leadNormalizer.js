@@ -1,6 +1,7 @@
 const { normalizePhone } = require('./phoneNormalizer');
 const { verifyEmail } = require('./emailVerifier');
 const { scoreField } = require('./confidenceScorer');
+const { classifyWebsite } = require('./fakeWebsiteDetector');
 
 /**
  * Derives an ISO 3166-1 alpha-2 country hint from a freeform city/country string.
@@ -105,7 +106,11 @@ async function normalizeLead(rawLead) {
         normalizedLoc = localArea;
     }
 
-    // 4. Construct Clean Lead Object
+    // 4. Classify website: null out social/directory URLs and preserve them for outreach context
+    const webClass = classifyWebsite(website);
+    const resolvedWebsite = webClass.isFake ? null : (website || null);
+
+    // 5. Construct Clean Lead Object
     return {
         businessName,
         phone: {
@@ -119,7 +124,9 @@ async function normalizeLead(rawLead) {
             status: emailData.status,
             score: emailScore
         },
-        website: website || null,
+        website: resolvedWebsite,
+        social_as_website: webClass.originalUrl,   // preserved original URL if fake, else null
+        fake_website: webClass.isFake,
         location: { // LOCATION CHANGE
             localArea: location?.localArea || "",
             city: location?.city || "",

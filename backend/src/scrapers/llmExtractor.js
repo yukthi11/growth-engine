@@ -26,7 +26,7 @@ const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY || 'dummy' });
 // =============================================================================
 const FAST_MODEL = process.env.FAST_LLM_MODEL || 'phi3';
 const QUALITY_MODEL = process.env.QUALITY_LLM_MODEL || 'llama3.2';
-const GROQ_MODEL = process.env.GROQ_MODEL || 'llama-3.3-70b-versatile';
+const GROQ_MODEL = process.env.GROQ_MODEL || 'qwen/qwen3.6-27b';
 
 const randomBetween = (min, max) => Math.floor(Math.random() * (max - min + 1) + min);
 
@@ -105,8 +105,20 @@ function withTimeout(promise, ms, label = 'LLM API') {
 }
 
 // ─── Shared Text Helpers ──────────────────────────────────────────────────────
+/**
+ * Strips reasoning/thinking wrappers that some models (Qwen3, DeepSeek-R1, etc.)
+ * emit before the actual response, then removes markdown code fences.
+ * Safe to call multiple times — idempotent.
+ */
 function cleanTextResponse(text) {
-    return text.replace(/```[a-z]*\n?/gi, '').replace(/```/gi, '').trim();
+    return text
+        // Strip <think>...</think> and similar XML-style reasoning blocks
+        .replace(/<think>[\s\S]*?<\/think>/gi, '')
+        .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+        // Strip markdown fences
+        .replace(/```[a-z]*\n?/gi, '')
+        .replace(/```/gi, '')
+        .trim();
 }
 
 function cleanJsonResponse(text) {

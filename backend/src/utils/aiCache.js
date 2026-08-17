@@ -17,8 +17,14 @@ class AICache {
             const cacheKey = crypto.createHash('md5').update(input).digest('hex');
             const res = await pool.query('SELECT response FROM ai_cache WHERE cache_key = $1 LIMIT 1', [cacheKey]);
             if (res.rowCount > 0) {
+                const raw = res.rows[0].response;
+                // Self-heal: strip thinking-model tags from any stale cached response
+                const cleaned = raw
+                    .replace(/<think>[\s\S]*?<\/think>/gi, '')
+                    .replace(/<reasoning>[\s\S]*?<\/reasoning>/gi, '')
+                    .trim();
                 console.log(`[AI Cache] HIT: Reusing response for ${cacheKey}`);
-                return res.rows[0].response;
+                return cleaned;
             }
             return null;
         } catch (err) {
@@ -37,7 +43,8 @@ class AICache {
         try {
             const cacheKey = crypto.createHash('md5').update(input).digest('hex');
             await pool.query(
-                'INSERT INTO ai_cache (cache_key, response) VALUES ($1, $2) ON CONFLICT (cache_key) DO NOTHING',
+                // DO UPDATE so fresh responses can overwrite previously bad/stale entries
+                'INSERT INTO ai_cache (cache_key, response) VALUES ($1, $2) ON CONFLICT (cache_key) DO UPDATE SET response = EXCLUDED.response',
                 [cacheKey, response]
             );
         } catch (err) {

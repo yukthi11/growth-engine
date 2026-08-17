@@ -22,13 +22,30 @@ class GoogleMapsScraper extends BaseScraper {
             this.log(`Deep Discovery enabled. Splitting "${query}" into hyper-local sub-queries...`);
             return await this.scrapeDeep(query, expectedLocation, options);
         }
-        return await this.scrapeSingle(query, false, expectedLocation, isProximity, hasLocation);
+        return await this.scrapeSingle(query, { isSubQuery: false, isProximity, hasLocation, expectedLocation });
     }
 
     /**
      * Internal runner for a single search page.
      */
-    async scrapeSingle(query, isSubQuery = false, expectedLocation = null, isProximity = false, hasLocation = false) {
+    /**
+     * @param {string} query
+     * @param {Object} opts
+     * @param {boolean} [opts.isSubQuery=false]   - True when called from scrapeDeep for a sub-area query
+     * @param {boolean} [opts.isDeepSingle=false] - True when called from scrapeDeep for a small-town enhanced single pass
+     * @param {string|null} [opts.expectedLocation=null]
+     * @param {boolean} [opts.isProximity=false]
+     * @param {boolean} [opts.hasLocation=false]
+     */
+    async scrapeSingle(query, opts = {}) {
+        const {
+            isSubQuery = false,
+            isDeepSingle = false,
+            expectedLocation = null,
+            isProximity = false,
+            hasLocation = false,
+        } = opts;
+
         try {
             const url = `https://www.google.com/maps/search/${encodeURIComponent(query)}`;
             this.log(`Search: ${query}`);
@@ -48,7 +65,8 @@ class GoogleMapsScraper extends BaseScraper {
                 await feed.hover().catch(() => { });
             }
 
-            const scrollCount = isSubQuery ? 15 : 5; // Sub-queries don't need 30 scrolls each
+            // Scroll counts: deepSingle = enhanced single pass; subQuery = per-area pass; normal = standard
+            const scrollCount = isDeepSingle ? 25 : isSubQuery ? 15 : 5;
             for (let i = 0; i < scrollCount; i++) {
                 await humanScroll(this.page);
                 await randomDelay(1500, 2500);
@@ -78,17 +96,26 @@ class GoogleMapsScraper extends BaseScraper {
                     }
                 });
                 return results.slice(0, limit);
-            }, isSubQuery ? 50 : 25); // Increased search list limit to allow for filtering drops
+            }, isDeepSingle ? 100 : isSubQuery ? 50 : 25); // deepSingle gets higher cap for small-town passes
 
             this.log(`Found ${businessLinks.length} businesses for query segment.`);
 
             // STEP 2 - Visit each URL directly and extract details
             const leads = [];
             for (let i = 0; i < businessLinks.length; i++) {
+                // Check for cancellation before visiting each business URL
+                if (await this.isCancelRequested()) {
+                    this.log(`[Cancel] Cancellation detected — stopping after ${leads.length} leads.`);
+                    break;
+                }
+
                 const { url, businessName, subtitle } = businessLinks[i];
 
                 // --- EARLY SIDEBAR GUARD ---
-                if (expectedLocation && subtitle) {
+                // Only apply for sub-area queries, NOT for isDeepSingle — in deepSingle mode Google
+                // already geo-centered the search, so subtitle-based filtering causes false rejections
+                // (e.g. "Resort · Mayaganahalli" is legitimately inside Ramanagara district).
+                if (!isDeepSingle && expectedLocation && subtitle) {
                     const normalizedSub = subtitle.toLowerCase();
                     const target = expectedLocation.toLowerCase().split(' ')[0]; // e.g. "kammanahalli"
                     
@@ -178,8 +205,11 @@ class GoogleMapsScraper extends BaseScraper {
                 } catch (err) { continue; }
             }
 
-            // Filter leads based on query intent (only for direct queries, sub-queries trust Google)
-            if (!isSubQuery && hasLocation) {
+            // Filter leads based on query intent.
+            // Sub-queries and deepSingle both trust Google's geocoding — no text-based location filter.
+            // isDeepSingle: Google already centred the search on the target location; village-level addresses
+            //   (e.g. "Mayaganahalli, Karnataka 562128") are valid results inside the searched district.
+            if (!isSubQuery && !isDeepSingle && hasLocation) {
                 const filteredLeads = [];
                 for (const lead of leads) {
                     const isExact = isStrictMatch([lead.businessName, lead.location.address, lead.location.localArea, lead.location.subtitle], expectedLocation);
@@ -201,8 +231,8 @@ class GoogleMapsScraper extends BaseScraper {
                     }
                 }
                 return filteredLeads;
-            } else if (isSubQuery && expectedLocation) {
-                // Sub-queries tag all results for their respective area
+            } else if ((isSubQuery || isDeepSingle) && expectedLocation) {
+                // Trust Google Maps' geocoding — tag all results with the searched location
                 return leads.map(lead => tagProximityLead(lead, expectedLocation, true));
             }
 
@@ -216,6 +246,10 @@ class GoogleMapsScraper extends BaseScraper {
     /**
      * Uses phi3 (Tier 2) to discover the top commercial neighborhoods for any city.
      * Falls back to static Bangalore list if LLM is unavailable or city is unclear.
+     *
+     * @returns {{ areas: string[], city: string, isSmallTown: boolean }}
+     *   isSmallTown=true means the location is a destination/small town without distinct
+     *   commercial neighbourhoods — scrapeDeep should do an enhanced single-pass instead.
      */
     async _discoverAreas(city, excludedAreas = []) {
         // Static fallback for Bangalore (most common use-case, no LLM needed)
@@ -227,14 +261,14 @@ class GoogleMapsScraper extends BaseScraper {
             'Rajajinagar', 'Vijayanagar', 'Hebbal', 'Yelahanka', 'RT Nagar',
             'Nagavara', 'Hennur', 'Mahadevapura', 'Panathur', 'Varthur'
         ];
-        
+
         if (excludedAreas.length > 0) {
             const lowerEx = new Set(excludedAreas.map(a => a.toLowerCase()));
             BANGALORE_FALLBACK = BANGALORE_FALLBACK.filter(a => !lowerEx.has(a.toLowerCase()));
         }
 
         const isBangalore = /bangalore|bengaluru/i.test(city);
-        if (isBangalore) return { areas: BANGALORE_FALLBACK, city: 'Bangalore' };
+        if (isBangalore) return { areas: BANGALORE_FALLBACK, city: 'Bangalore', isSmallTown: false };
 
         try {
             this.log(`Discovering neighborhoods for "${city}" via LLM...`);
@@ -242,18 +276,19 @@ class GoogleMapsScraper extends BaseScraper {
 You are a geography assistant.
 
 Task:
-List the 8 most well-known large administrative districts or neighborhoods in the city: ${city}.
+Analyse the city/town: ${city}.
+
+First, determine if this is a SMALL TOWN / DESTINATION (e.g. a hill station, resort town, village, or any place that does NOT have distinct commercial neighbourhoods worth searching separately). If it is, respond with exactly: {"isSmallTown": true}
+
+Otherwise, list the 8 most well-known large administrative districts or neighbourhoods.
 
 STRICT RULES:
-- Return ONLY a valid JSON array of strings. No preamble, no explanation, no markdown.
-- NO LANDMARKS (e.g., skip Alexanderplatz, Eiffel Tower, etc.).
-- NO STREET NAMES.
-- NO COMBINED NAMES (e.g., if you have "Tempelhof-Schöneberg", return them as two separate items "Tempelhof", "Schöneberg").
+- Return ONLY valid JSON. No preamble, no explanation, no markdown.
+- For large cities: {"isSmallTown": false, "areas": ["District1", "District2", ...]}
+- For small towns: {"isSmallTown": true}
+- NO LANDMARKS, NO STREET NAMES, NO COMBINED NAMES.
 - Each item must be a distinct district.
-- If the city is small, return at least 3 items.
-${excludedAreas.length > 0 ? `- STRICT EXCLUSION: Do NOT include ANY of the following neighborhoods as they have already been searched: ${JSON.stringify(excludedAreas)}` : ''}
-
-Example: ["Mitte", "Charlottenburg", "Kreuzberg", "Neukölln"]
+${excludedAreas.length > 0 ? `- STRICT EXCLUSION: Do NOT include ANY of the following: ${JSON.stringify(excludedAreas)}` : ''}
 
 City: ${city}
 `.trim();
@@ -261,16 +296,23 @@ City: ${city}
             const raw = await fastPrompt(geographyPrompt);
             // Strip markdown fences if model returned them
             const cleaned = raw.replace(/```[a-z]*\n?/gi, '').replace(/```/gi, '').trim();
-            const areas = JSON.parse(cleaned);
+            const parsed = JSON.parse(cleaned);
 
+            if (parsed && parsed.isSmallTown === true) {
+                this.log(`"${city}" identified as a small town — will use enhanced single-pass instead of sub-area splitting.`);
+                return { areas: [], city, isSmallTown: true };
+            }
+
+            const areas = parsed.areas || (Array.isArray(parsed) ? parsed : null);
             if (Array.isArray(areas) && areas.length >= 3) {
                 this.log(`Discovered ${areas.length} areas for ${city}: ${areas.join(', ')}`);
-                return { areas, city };
+                return { areas, city, isSmallTown: false };
             }
             throw new Error('LLM returned an invalid area list');
         } catch (err) {
-            this.log(`LLM area discovery failed (${err.message}). Defaulting to Bangalore list.`);
-            return { areas: BANGALORE_FALLBACK, city: 'Bangalore' };
+            this.log(`LLM area discovery failed (${err.message}). Falling back to enhanced single-pass for "${city}".`);
+            // Don't redirect to Bangalore — use the original city with enhanced single-pass mode.
+            return { areas: [], city, isSmallTown: true };
         }
     }
 
@@ -281,7 +323,7 @@ City: ${city}
     async scrapeDeep(query, manualLocation = null, options = {}) {
         const { campaignId } = options;
         // Extract city from query: "dance classes in Bangkok" → "Bangkok"
-        const cityMatch = query.match(/(?:in|near|at|around|close to|nearby)\s+([\w\s]+?)(?:,|$)/i);
+        const cityMatch = query.match(/(?:in|near|at|around|close to|nearby)\s+([\/\w\s]+?)(?:,|$)/i);
         const detectedCity = cityMatch ? cityMatch[1].trim() : (manualLocation || 'Bangalore');
 
         // Fetch already searched areas from PostgreSQL
@@ -301,7 +343,24 @@ City: ${city}
             }
         }
 
-        const { areas: targetAreas, city } = await this._discoverAreas(detectedCity, excludedAreas);
+        const { areas: targetAreas, city, isSmallTown } = await this._discoverAreas(detectedCity, excludedAreas);
+
+        // ── Small-town / destination fallback ────────────────────────────────────────
+        // Places like Sakleshpur, Coorg, Ooty etc. have no meaningful commercial
+        // sub-neighbourhoods. Splitting into area sub-queries returns near-zero results
+        // and triggers false-positive Sidebar Guard filtering. Instead, do a single
+        // enhanced pass with more scrolls and a higher result cap.
+        if (isSmallTown) {
+            this.log(`Small-town mode for "${city}": running enhanced single-pass scrape.`);
+            const { isProximity, hasLocation } = parseQueryIntent(query);
+            return await this.scrapeSingle(query, {
+                isDeepSingle: true,
+                expectedLocation: city,
+                isProximity,
+                hasLocation,
+            });
+        }
+
         const combinedLeads = [];
         const seenNames = new Set();
 
@@ -323,7 +382,7 @@ City: ${city}
             const subQuery = `${baseQuery} in ${area}, ${city}`;
             // For sub-queries, the area itself is the expected location.
             // isProximity = false, hasLocation = true
-            const subLeads = await this.scrapeSingle(subQuery, true, area, false, true);
+            const subLeads = await this.scrapeSingle(subQuery, { isSubQuery: true, expectedLocation: area, isProximity: false, hasLocation: true });
 
             for (const lead of subLeads) {
                 if (!seenNames.has(lead.businessName)) {

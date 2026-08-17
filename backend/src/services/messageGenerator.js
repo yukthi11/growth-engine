@@ -113,6 +113,7 @@ async function generateFirstMessage(lead, company) {
         location = location.charAt(0).toUpperCase() + location.slice(1);
     }
     const pillar = lead.gap_pillar || null;
+    const gapDetails = typeof lead.gap_details === 'string' ? JSON.parse(lead.gap_details) : (lead.gap_details || {});
 
     let message;
     let source;
@@ -121,7 +122,7 @@ async function generateFirstMessage(lead, company) {
 
     if (pillar && isGrowthEngine) {
         // Priority 1: Structured pillar message (ONLY for Growth Engine)
-        const resolved = resolveOutreachByPillar(pillar, businessName, location);
+        const resolved = resolveOutreachByPillar(pillar, businessName, location, gapDetails);
         message = resolved.whatsapp;
         source = `pillar:${pillar}`;
     } else if (company?.whatsapp_template?.trim()) {
@@ -167,6 +168,7 @@ async function generateEmailDraft(lead, company) {
         location = location.charAt(0).toUpperCase() + location.slice(1);
     }
     const pillar = lead.gap_pillar || null;
+    const gapDetails = typeof lead.gap_details === 'string' ? JSON.parse(lead.gap_details) : (lead.gap_details || {});
 
     let subject, body;
 
@@ -174,7 +176,7 @@ async function generateEmailDraft(lead, company) {
 
     if (pillar && isGrowthEngine) {
         // Priority 1: Structured pillar message (ONLY for Growth Engine)
-        const resolved = resolveOutreachByPillar(pillar, businessName, location);
+        const resolved = resolveOutreachByPillar(pillar, businessName, location, gapDetails);
         subject = resolved.email.subject;
         body = resolved.email.body;
     } else {

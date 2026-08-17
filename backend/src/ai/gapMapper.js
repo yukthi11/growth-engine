@@ -8,8 +8,8 @@ const GAP_WEIGHTS = {
     slowWebsite: 6,
     noSSL: 6,
     inactiveSocial: 5,
-    noEmailCapture: 4,
-    noLeadForm: 4,
+    noEmailCapture: 2, // lowered from 4 to prevent contact form double-counting bias
+    noLeadForm: 2,     // lowered from 4 to prevent contact form double-counting bias
     noSchema: 3,
     noChat: 3,
     missingGBPFields: 2
@@ -36,6 +36,35 @@ const PILLAR_MAPPING = {
 };
 
 /**
+ * Computes all deterministic (binary) gap flags directly from scraped website data.
+ * This eliminates the need for the LLM to re-detect facts the code already knows.
+ * @param {Object|null} websiteAnalysis - Result from websiteAnalyzer.js
+ * @param {string|null} website - The lead's website URL (used to check noWebsite/noSSL)
+ * @returns {Object} gap flags object
+ */
+function computeGapsFromAnalysis(websiteAnalysis, website) {
+    const hasWebsite = !!website && website.trim().length > 0;
+    const hasSSL = hasWebsite && website.trim().toLowerCase().startsWith('https');
+
+    return {
+        noWebsite: !hasWebsite,
+        brokenWebsite: hasWebsite && !websiteAnalysis,          // Had URL but analysis returned null
+        noWhatsApp: !(websiteAnalysis?.hasWhatsapp),
+        noBookingSystem: false,                                  // Cannot be reliably detected via scraping
+        fewReviews: false,                                       // Requires GMB API — not available
+        lowRating: false,                                        // Requires GMB API — not available
+        slowWebsite: false,                                      // Requires Lighthouse — not available
+        noSSL: hasWebsite && !hasSSL,
+        inactiveSocial: !(websiteAnalysis?.hasSocialLinks?.length > 0),
+        noEmailCapture: !(websiteAnalysis?.hasContactForm),
+        noLeadForm: !(websiteAnalysis?.hasContactForm),
+        noSchema: false,                                         // Requires structured data parser — not available
+        noChat: true,                                            // Assumed true unless chat widget is detected
+        missingGBPFields: false                                  // Requires GMB API — not available
+    };
+}
+
+/**
  * Processes raw AI output into a structured gap intelligence object.
  * @param {Object} aiOutput - The raw JSON output from the AI
  * @returns {Object} Mapped gap intelligence
@@ -60,9 +89,13 @@ function processGapIntelligence(aiOutput) {
     const calculatedScore = Math.max(0, 100 - totalPenalty);
 
     // 1.5 Determine Tier based on score (consistent with legacy logic)
+    // REVERSED sales grading tier:
+    // - Hot (Score <= 70): Many gaps, highest need/potential
+    // - Warm (Score 71 - 89): Moderate gaps
+    // - Cold (Score >= 90): Near-perfect, lowest need
     let determinedTier = 'cold';
-    if (calculatedScore >= 70) determinedTier = 'hot';
-    else if (calculatedScore >= 40) determinedTier = 'warm';
+    if (calculatedScore <= 70) determinedTier = 'hot';
+    else if (calculatedScore <= 89) determinedTier = 'warm';
 
     // 2. Extract top 3 gaps by weight
     activeGaps.sort((a, b) => b.weight - a.weight);
@@ -98,6 +131,7 @@ function processGapIntelligence(aiOutput) {
 
 module.exports = {
     processGapIntelligence,
+    computeGapsFromAnalysis,
     GAP_WEIGHTS,
     PILLAR_MAPPING
 };

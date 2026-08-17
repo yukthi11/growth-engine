@@ -1,6 +1,81 @@
-import React from 'react';
+import React, { useState, useRef, useEffect } from 'react';
+import { updateCampaign } from '../api/client';
 
-const CampaignSelector = ({ campaigns, selectedCampaign, onChange, onDelete, isDeleting = false, minimal }) => {
+// ── Inline rename input — shared by both layout variants ────────────────────
+const InlineRename = ({ campaign, onRenamed }) => {
+    const [editing, setEditing] = useState(false);
+    const [value, setValue] = useState(campaign.name);
+    const [saving, setSaving] = useState(false);
+    const inputRef = useRef(null);
+
+    // Keep local value in sync if parent swaps campaign
+    useEffect(() => {
+        setValue(campaign.name);
+        setEditing(false);
+    }, [campaign.id, campaign.name]);
+
+    const handleSave = async () => {
+        const trimmed = value.trim();
+        if (!trimmed || trimmed === campaign.name) {
+            setValue(campaign.name);
+            setEditing(false);
+            return;
+        }
+        setSaving(true);
+        try {
+            await updateCampaign(campaign.id, { name: trimmed });
+            onRenamed(campaign.id, trimmed);
+        } catch (err) {
+            console.error('[CampaignSelector] Rename failed:', err);
+            setValue(campaign.name); // revert on error
+        } finally {
+            setSaving(false);
+            setEditing(false);
+        }
+    };
+
+    const handleKeyDown = (e) => {
+        if (e.key === 'Enter') handleSave();
+        if (e.key === 'Escape') { setValue(campaign.name); setEditing(false); }
+    };
+
+    if (editing) {
+        return (
+            <input
+                ref={inputRef}
+                autoFocus
+                value={value}
+                onChange={(e) => setValue(e.target.value)}
+                onBlur={handleSave}
+                onKeyDown={handleKeyDown}
+                disabled={saving}
+                className="bg-transparent border-b border-violet-500 text-white text-xs font-bold focus:outline-none w-32 disabled:opacity-50"
+                title="Press Enter to save, Escape to cancel"
+            />
+        );
+    }
+
+    return (
+        <button
+            onClick={() => setEditing(true)}
+            className="flex items-center gap-1 text-slate-500 hover:text-violet-400 transition-colors"
+            title="Rename campaign"
+        >
+            <svg className="w-3 h-3 opacity-40 hover:opacity-100 transition-opacity" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" />
+            </svg>
+        </button>
+    );
+};
+
+// ── Main Component ───────────────────────────────────────────────────────────
+const CampaignSelector = ({ campaigns, selectedCampaign, onChange, onDelete, onRenamed, isDeleting = false, minimal }) => {
+    const activeCampaign = campaigns.find(c => String(c.id) === String(selectedCampaign));
+
+    const handleRenamed = (id, newName) => {
+        if (onRenamed) onRenamed(id, newName);
+    };
+
     if (minimal) {
         return (
             <div className="relative group flex items-center gap-2">
@@ -23,6 +98,12 @@ const CampaignSelector = ({ campaigns, selectedCampaign, onChange, onDelete, isD
                         </svg>
                     </div>
                 </div>
+
+                {/* Rename button — only visible when a campaign is selected */}
+                {activeCampaign && (
+                    <InlineRename campaign={activeCampaign} onRenamed={handleRenamed} />
+                )}
+
                 {selectedCampaign && (
                     <button
                         onClick={onDelete}
@@ -42,9 +123,14 @@ const CampaignSelector = ({ campaigns, selectedCampaign, onChange, onDelete, isD
     return (
         <div className="relative w-full max-w-sm">
             <div className="mb-1.5 flex items-center justify-between gap-3 ml-1">
-                <label htmlFor="campaign-select" className="block text-xs font-bold text-slate-500 uppercase tracking-widest">
-                    Active Campaign
-                </label>
+                <div className="flex items-center gap-2">
+                    <label htmlFor="campaign-select" className="block text-xs font-bold text-slate-500 uppercase tracking-widest">
+                        Active Campaign
+                    </label>
+                    {activeCampaign && (
+                        <InlineRename campaign={activeCampaign} onRenamed={handleRenamed} />
+                    )}
+                </div>
                 <button
                     type="button"
                     onClick={onDelete}

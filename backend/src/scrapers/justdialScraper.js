@@ -71,13 +71,14 @@ class JustdialScraper extends BaseScraper {
             const isCity = KNOWN_CITIES.some(c => locationLower === c || locationLower.includes(c));
 
             if (isCity) {
-                // It's a top-level city search: "gyms in pune" → /Pune/Gyms
+                // It's a top-level metro city search: "gyms in pune" → /Pune/Gyms
                 city = locationName.split(' ').map(w => w[0].toUpperCase() + w.slice(1)).join('-');
                 areaSlug = null;
             } else {
-                // It's a hyper-local area search: "universities in bagalur" → /Bangalore/Universities-in-Bagalur
-                city = DEFAULT_CITY;
-                areaSlug = locationName.split(' ').map(w => w[0].toUpperCase() + w.slice(1)).join('-');
+                // For any other town/city (e.g. Ramanagara, Sakleshpur): use its own name as city slug
+                // "resorts in ramanagara" → /Ramanagara/Resorts
+                city = locationName.split(' ').map(w => w[0].toUpperCase() + w.slice(1)).join('-');
+                areaSlug = null;
             }
         }
 
@@ -216,7 +217,6 @@ class JustdialScraper extends BaseScraper {
                 let isExact = false;
 
                 if (hasLocation && expectedLocation) {
-                    console.log(`[DEBUG Area Guard] businessName: "${businessName}", addressLower: "${addressLower}", localArea: "${localArea}"`);
                     isExact = isStrictMatch([businessName, addressLower, localArea], expectedLocation);
                     if (!isProximity && !isExact) {
                         this.log(`[Area Guard] Skipping ${businessName} - Not in ${expectedLocation}`);

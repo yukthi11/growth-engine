@@ -193,9 +193,9 @@ async function analyzeWebsite(websiteUrl, options = {}) {
             });
 
             // ── Strategy 2: Direct URL probing ───────────────────────────────
-            // If link detection failed or found the wrong page, try common
-            // contact page URL patterns directly against the site's origin.
-            const CONTACT_PATHS = ['/contact', '/contact-us', '/contacts', '/reach-us', '/get-in-touch', '/connect', '/about'];
+            // If link detection failed, only probe the single most common fallback
+            // to prevent 100+ second sequential 404 delays on slow websites.
+            const CONTACT_PATHS = ['/contact', '/about'];
             let urlsToScan = [];
             if (contactPageUrl && contactPageUrl !== websiteUrl) {
                 urlsToScan.push(contactPageUrl); // Prioritise discovered link
@@ -203,9 +203,12 @@ async function analyzeWebsite(websiteUrl, options = {}) {
             // Always probe common paths as additional fallback URLs
             try {
                 const origin = new URL(websiteUrl).origin;
+                // Cap at maximum 2 URLs to scan to keep analysis under 30 seconds
                 for (const p of CONTACT_PATHS) {
                     const candidate = origin + p;
-                    if (!urlsToScan.includes(candidate)) urlsToScan.push(candidate);
+                    if (!urlsToScan.includes(candidate) && urlsToScan.length < 2) {
+                        urlsToScan.push(candidate);
+                    }
                 }
             } catch (_) { }
 

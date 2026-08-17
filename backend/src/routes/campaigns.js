@@ -176,21 +176,39 @@ router.post('/:id/bulk-send', async (req, res) => {
     }
 
     try {
-        // [SELF-HEALING] Reset any 'stuck' queued leads to 'new' before dispatching
-        // This fixes the issue where leads are marked 'queued' in DB but are missing in Redis
-        const resetRes = await pool.query(
-            "UPDATE leads SET status = 'new' WHERE campaign_id = $1 AND status = 'queued'",
+        // [SELF-HEALING] Rescue only truly orphaned leads — those marked 'queued' in DB
+        // but whose messages were never actually sent (e.g. Redis crashed mid-dispatch).
+        // IMPORTANT: We exclude any lead that has a 'sent' message to prevent re-sending.
+        const resetRes = await pool.query(`
+            UPDATE leads SET status = 'new'
+            WHERE campaign_id = $1
+              AND status = 'queued'
+              AND id NOT IN (
+                  SELECT DISTINCT lead_id FROM messages WHERE status = 'sent'
+              )`,
             [id]
         );
-        if (resetRes.rowCount > 0) {
-            console.log(`📡 [Self-Healing] Rescued ${resetRes.rowCount} leads from Limbo for campaign ${id}`);
+
+        // Clean up any pending ghost messages left by a crashed Redis queue
+        const resetMsgs = await pool.query(`
+            UPDATE messages m
+            SET status = 'failed', failure_reason = 'Redis queue dropped (Ghost Message)'
+            FROM leads l
+            WHERE m.lead_id = l.id
+              AND l.campaign_id = $1
+              AND m.status = 'pending'`,
+            [id]
+        );
+
+        if (resetRes.rowCount > 0 || resetMsgs.rowCount > 0) {
+            console.log(`📡 [Self-Healing] Rescued ${resetRes.rowCount} leads and cleaned ${resetMsgs.rowCount} ghost messages for campaign ${id}`);
         }
 
-        // [PRE-CHECK] Check if there are actually any leads available to send to
+        // [PRE-CHECK] Only count leads that haven't been contacted yet
         let leadCheckQuery = `
             SELECT COUNT(id) FROM leads 
             WHERE campaign_id = $1
-            -- AND status IN ('new', 'draft', 'queued') -- TEMPORARILY DISABLED FOR TESTING
+              AND status IN ('new', 'draft')
         `;
         let checkValues = [id];
 
@@ -235,7 +253,7 @@ router.post('/:id/bulk-send', async (req, res) => {
 
 /**
  * GET /campaigns/:id/outreach-progress
- * Fetch real-time progress of the outreach queue
+ * Fetch real-time progress of the active outreach queue
  */
 router.get('/:id/outreach-progress', async (req, res) => {
     const { id } = req.params;
@@ -262,6 +280,54 @@ router.get('/:id/outreach-progress', async (req, res) => {
     } catch (err) {
         console.error('Progress tracking failed:', err);
         res.status(500).json({ error: 'Failed to fetch progress' });
+    }
+});
+
+/**
+ * GET /campaigns/:id/outreach-summary
+ * Returns a per-channel breakdown of sent vs. remaining leads.
+ * Used by the UI to show "Continue Sending" state before dispatch.
+ */
+router.get('/:id/outreach-summary', async (req, res) => {
+    const { id } = req.params;
+    try {
+        const [totalRes, sentRes, remainingRes] = await Promise.all([
+            pool.query(
+                `SELECT COUNT(*) FROM leads WHERE campaign_id = $1`,
+                [id]
+            ),
+            pool.query(
+                `SELECT
+                    SUM(CASE WHEN m.channel = 'whatsapp' AND m.status = 'sent' THEN 1 ELSE 0 END) AS whatsapp_sent,
+                    SUM(CASE WHEN m.channel = 'email' AND m.status = 'sent' THEN 1 ELSE 0 END) AS email_sent
+                 FROM messages m
+                 JOIN leads l ON m.lead_id = l.id
+                 WHERE l.campaign_id = $1 AND m.message_type = 'first_outreach'`,
+                [id]
+            ),
+            pool.query(
+                `SELECT
+                    SUM(CASE WHEN phone IS NOT NULL THEN 1 ELSE 0 END) AS whatsapp_remaining,
+                    SUM(CASE WHEN email_address IS NOT NULL THEN 1 ELSE 0 END) AS email_remaining
+                 FROM leads
+                 WHERE campaign_id = $1 AND status IN ('new', 'draft')`,
+                [id]
+            )
+        ]);
+
+        const sent = sentRes.rows[0];
+        const remaining = remainingRes.rows[0];
+
+        res.json({
+            total: parseInt(totalRes.rows[0].count) || 0,
+            whatsapp_sent: parseInt(sent.whatsapp_sent) || 0,
+            email_sent: parseInt(sent.email_sent) || 0,
+            whatsapp_remaining: parseInt(remaining.whatsapp_remaining) || 0,
+            email_remaining: parseInt(remaining.email_remaining) || 0
+        });
+    } catch (err) {
+        console.error('Outreach summary failed:', err);
+        res.status(500).json({ error: 'Failed to fetch outreach summary' });
     }
 });
 

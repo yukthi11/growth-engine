@@ -1,5 +1,3 @@
-const { chromium } = require('playwright');
-
 /**
  * Waits for a random number of milliseconds between min and max.
  * @param {number} min 
@@ -57,44 +55,6 @@ async function humanType(page, selector, text) {
         await page.keyboard.type(char, { delay: Math.floor(Math.random() * (150 - 50 + 1) + 50) });
     }
     await randomDelay(300, 700);
-}
-
-// Test block
-async function main() {
-    try {
-        const browser = await chromium.launch({ headless: true });
-        const context = await browser.newContext();
-        const page = await context.newPage();
-
-        await page.goto('https://example.com');
-
-        console.log("Starting human behavior simulation...");
-
-        await randomDelay(800, 2400);
-        await humanScroll(page);
-        await humanMouseMove(page);
-
-        // example.com doesn't have an input, so we'll skip the actual typing or 
-        // just try it on a dummy selector if it existed. 
-        // Since main() must call all 4, let's use a try-catch for typing 
-        // or just let it fail gracefully if selector not found if we want to follow strictly.
-        // Actually, let's just use 'body' as a selector to avoid errors for the test.
-        try {
-            await humanType(page, 'h1', 'test');
-        } catch (e) {
-            // h1 is usually clickable, but keyboard.type might not do much if it's not an input.
-            // That's fine for the test block requirement.
-        }
-
-        console.log("Human behavior simulation complete");
-        await browser.close();
-    } catch (error) {
-        console.error("Error in humanBehavior main:", error);
-    }
-}
-
-if (require.main === module) {
-    main();
 }
 
 module.exports = {

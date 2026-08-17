@@ -1,12 +1,36 @@
 import React, { useState, useEffect } from 'react';
-import { getOutreachProgress } from '../api/client';
+import { getOutreachProgress, getOutreachSummary } from '../api/client';
 
 const SendOutreachModal = ({ isOpen, onClose, onSubmit, campaignName, campaignId }) => {
     const [isSubmitting, setIsSubmitting] = useState(false);
     const [isTracking, setIsTracking] = useState(false);
     const [progress, setProgress] = useState(null);
     const [selectedChannel, setSelectedChannel] = useState(null);
+    const [summary, setSummary] = useState(null);
+    const [summaryLoading, setSummaryLoading] = useState(false);
 
+    // Fetch the per-channel sent/remaining summary whenever the modal opens
+    useEffect(() => {
+        if (isOpen && campaignId) {
+            setSummaryLoading(true);
+            getOutreachSummary(campaignId)
+                .then(setSummary)
+                .catch(() => setSummary(null))
+                .finally(() => setSummaryLoading(false));
+        }
+    }, [isOpen, campaignId]);
+
+    // Reset state on open
+    useEffect(() => {
+        if (isOpen) {
+            setIsSubmitting(false);
+            setIsTracking(false);
+            setProgress(null);
+            setSelectedChannel(null);
+        }
+    }, [isOpen]);
+
+    // Poll for real-time progress while a dispatch is running
     useEffect(() => {
         let interval;
         if (isTracking && campaignId) {
@@ -29,15 +53,6 @@ const SendOutreachModal = ({ isOpen, onClose, onSubmit, campaignName, campaignId
         return () => clearInterval(interval);
     }, [isTracking, campaignId, onClose]);
 
-    useEffect(() => {
-        if (isOpen) {
-            setIsSubmitting(false);
-            setIsTracking(false);
-            setProgress(null);
-            setSelectedChannel(null);
-        }
-    }, [isOpen]);
-
     if (!isOpen) return null;
 
     const handleSelect = async (channel) => {
@@ -54,18 +69,23 @@ const SendOutreachModal = ({ isOpen, onClose, onSubmit, campaignName, campaignId
         }
     };
 
+    // Determine if there is a partial send history to show
+    const hasSentHistory = summary && (summary.whatsapp_sent > 0 || summary.email_sent > 0);
+    const hasRemainingWhatsApp = summary && summary.whatsapp_remaining > 0;
+    const hasRemainingEmail = summary && summary.email_remaining > 0;
+
     return (
         <div className="fixed inset-0 z-[200] overflow-y-auto">
             <div className="flex items-center justify-center min-h-screen p-4">
                 {/* Glass Backdrop */}
-                <div 
-                    className="fixed inset-0 bg-midnight/85 backdrop-blur-xl animate-in fade-in duration-300" 
+                <div
+                    className="fixed inset-0 bg-midnight/85 backdrop-blur-xl animate-in fade-in duration-300"
                     onClick={isSubmitting ? null : onClose}
                 ></div>
 
                 {/* Modal Container */}
                 <div className="relative bg-midnight-lighter border border-white/10 rounded-[40px] shadow-2xl max-w-lg w-full p-10 animate-in slide-in-from-bottom-8 duration-300 premium-shadow">
-                    
+
                     {/* Header */}
                     <div className="mb-8 text-center relative">
                         <div className="inline-flex items-center gap-2 px-3 py-1 bg-violet-600/10 border border-violet-600/20 rounded-full text-[10px] font-black uppercase tracking-widest text-violet-400 mb-4">
@@ -79,7 +99,7 @@ const SendOutreachModal = ({ isOpen, onClose, onSubmit, campaignName, campaignId
                         </p>
 
                         {!isSubmitting && (
-                            <button 
+                            <button
                                 onClick={onClose}
                                 className="absolute top-0 right-0 p-2 bg-white/5 hover:bg-white/10 border border-white/5 rounded-xl text-slate-500 hover:text-white transition-all active:scale-95"
                                 title="Close"
@@ -91,7 +111,6 @@ const SendOutreachModal = ({ isOpen, onClose, onSubmit, campaignName, campaignId
                         )}
                     </div>
 
-                    {/* Channel Selection Options */}
                     <div className="space-y-4">
                         {isSubmitting ? (
                             <div className="py-20 flex flex-col items-center justify-center space-y-4">
@@ -102,8 +121,90 @@ const SendOutreachModal = ({ isOpen, onClose, onSubmit, campaignName, campaignId
                             </div>
                         ) : (
                             <>
+                                {/* Prior Send History Strip */}
+                                {!summaryLoading && hasSentHistory && (
+                                    <div className="bg-white/3 border border-white/8 rounded-[18px] p-4 mb-2">
+                                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest mb-3">
+                                            Previous Send Activity
+                                        </p>
+                                        <div className="grid grid-cols-2 gap-3">
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-base">💬</span>
+                                                <div>
+                                                    <div className="text-sm font-black text-emerald-400">{summary.whatsapp_sent} sent</div>
+                                                    <div className="text-[9px] text-slate-500 uppercase tracking-wide">{summary.whatsapp_remaining} remaining</div>
+                                                </div>
+                                            </div>
+                                            <div className="flex items-center gap-2">
+                                                <span className="text-base">✉️</span>
+                                                <div>
+                                                    <div className="text-sm font-black text-emerald-400">{summary.email_sent} sent</div>
+                                                    <div className="text-[9px] text-slate-500 uppercase tracking-wide">{summary.email_remaining} remaining</div>
+                                                </div>
+                                            </div>
+                                        </div>
+                                    </div>
+                                )}
+
+                                {/* Continue Sending section — shown only when there is partial history */}
+                                {hasSentHistory && (hasRemainingWhatsApp || hasRemainingEmail) && (
+                                    <div className="space-y-2">
+                                        <p className="text-[9px] font-black text-slate-500 uppercase tracking-widest px-1">
+                                            Continue Where You Left Off
+                                        </p>
+                                        {hasRemainingWhatsApp && (
+                                            <div
+                                                onClick={() => handleSelect('whatsapp')}
+                                                className="p-5 bg-emerald-500/5 hover:bg-emerald-500/10 border border-emerald-500/10 hover:border-emerald-500/30 rounded-[20px] cursor-pointer flex items-center justify-between transition-all duration-300 group transform hover:-translate-y-0.5 active:scale-98"
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    <span className="text-lg">💬</span>
+                                                    <div>
+                                                        <h4 className="text-sm font-black text-white group-hover:text-emerald-400 transition-colors">Continue WhatsApp</h4>
+                                                        <p className="text-[10px] text-slate-500">{summary.whatsapp_remaining} leads not yet contacted</p>
+                                                    </div>
+                                                </div>
+                                                <div className="p-2 bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 rounded-xl group-hover:scale-110 transition-transform">
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                                                    </svg>
+                                                </div>
+                                            </div>
+                                        )}
+                                        {hasRemainingEmail && (
+                                            <div
+                                                onClick={() => handleSelect('email')}
+                                                className="p-5 bg-violet-500/5 hover:bg-violet-500/10 border border-violet-500/10 hover:border-violet-500/30 rounded-[20px] cursor-pointer flex items-center justify-between transition-all duration-300 group transform hover:-translate-y-0.5 active:scale-98"
+                                            >
+                                                <div className="flex items-center gap-3">
+                                                    <span className="text-lg">✉️</span>
+                                                    <div>
+                                                        <h4 className="text-sm font-black text-white group-hover:text-violet-400 transition-colors">Continue Email</h4>
+                                                        <p className="text-[10px] text-slate-500">{summary.email_remaining} leads not yet contacted</p>
+                                                    </div>
+                                                </div>
+                                                <div className="p-2 bg-violet-500/10 border border-violet-500/20 text-violet-400 rounded-xl group-hover:scale-110 transition-transform">
+                                                    <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M14 5l7 7m0 0l-7 7m7-7H3" />
+                                                    </svg>
+                                                </div>
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
+
+                                {/* Divider when both sections are showing */}
+                                {hasSentHistory && (hasRemainingWhatsApp || hasRemainingEmail) && (
+                                    <div className="flex items-center gap-3 py-1">
+                                        <div className="flex-1 h-px bg-white/5"></div>
+                                        <span className="text-[9px] font-black text-slate-600 uppercase tracking-widest">Or start fresh</span>
+                                        <div className="flex-1 h-px bg-white/5"></div>
+                                    </div>
+                                )}
+
+                                {/* Standard Channel Cards — always shown */}
                                 {/* WhatsApp Card */}
-                                <div 
+                                <div
                                     onClick={() => handleSelect('whatsapp')}
                                     className="p-6 bg-emerald-500/5 hover:bg-emerald-500/10 border border-emerald-500/10 hover:border-emerald-500/30 rounded-[24px] cursor-pointer flex items-center justify-between transition-all duration-300 group transform hover:-translate-y-0.5 active:scale-98"
                                 >
@@ -124,7 +225,7 @@ const SendOutreachModal = ({ isOpen, onClose, onSubmit, campaignName, campaignId
                                 </div>
 
                                 {/* Email Card */}
-                                <div 
+                                <div
                                     onClick={() => handleSelect('email')}
                                     className="p-6 bg-violet-500/5 hover:bg-violet-500/10 border border-violet-500/10 hover:border-violet-500/30 rounded-[24px] cursor-pointer flex items-center justify-between transition-all duration-300 group transform hover:-translate-y-0.5 active:scale-98"
                                 >
@@ -145,7 +246,7 @@ const SendOutreachModal = ({ isOpen, onClose, onSubmit, campaignName, campaignId
                                 </div>
 
                                 {/* Send All Card */}
-                                <div 
+                                <div
                                     onClick={() => handleSelect('all')}
                                     className="p-6 bg-amber-500/5 hover:bg-amber-500/10 border border-amber-500/10 hover:border-amber-500/30 rounded-[24px] cursor-pointer flex items-center justify-between transition-all duration-300 group transform hover:-translate-y-0.5 active:scale-98"
                                 >
@@ -176,9 +277,9 @@ const SendOutreachModal = ({ isOpen, onClose, onSubmit, campaignName, campaignId
                                     </p>
                                 </div>
 
-                                {/* Progress Bar Container */}
+                                {/* Progress Bar */}
                                 <div className="relative w-full h-4 bg-white/5 rounded-full overflow-hidden border border-white/10">
-                                    <div 
+                                    <div
                                         className="absolute top-0 left-0 h-full bg-gradient-to-r from-violet-600 to-fuchsia-500 transition-all duration-500 ease-out"
                                         style={{ width: `${progress.dispatched > 0 ? ((progress.completed + progress.failed) / progress.dispatched) * 100 : 0}%` }}
                                     ></div>
@@ -214,7 +315,7 @@ const SendOutreachModal = ({ isOpen, onClose, onSubmit, campaignName, campaignId
                     {/* Footer Close Button */}
                     {!isSubmitting && !isTracking && (
                         <div className="mt-8 pt-6 border-t border-white/5 flex">
-                            <button 
+                            <button
                                 onClick={onClose}
                                 className="w-full py-4 border border-white/10 hover:bg-white/5 text-slate-500 hover:text-white font-black uppercase text-[10px] tracking-widest rounded-2xl transition-all active:scale-95"
                             >

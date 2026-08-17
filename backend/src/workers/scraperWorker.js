@@ -44,9 +44,10 @@ async function upsertGoldenRecord(goldenRecord, campaignId, companyId = 1) {
             email_address, location_normalized, source, status, sources, merged_at,
             instagram_username, facebook_username,
             intent_score, tier, service_fit, outreach_draft, enriched_at,
-            gap_details, gap_top, gap_pillar, gap_vertical, gap_pitch
+            gap_details, gap_top, gap_pillar, gap_vertical, gap_pitch,
+            social_as_website, fake_website
         )
-        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23)
+        VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25)
         RETURNING id;
     `;
 
@@ -74,7 +75,9 @@ async function upsertGoldenRecord(goldenRecord, campaignId, companyId = 1) {
         intel.gap_top || null,
         intel.gap_pillar || null,
         intel.gap_vertical || null,
-        intel.gap_pitch || null
+        intel.gap_pitch || null,
+        goldenRecord.social_as_website || null,  // $24 — original URL if website was a social/directory page
+        goldenRecord.fake_website || false        // $25 — true when the scraped website was not a real owned domain
     ];
 
     const res = await pool.query(queryText, values);
@@ -291,16 +294,23 @@ async function runSource(source, query, campaignId = 1, job = { id: 'manual' }, 
             try {
                 sharedBrowser = await launchBrowserInstance();
                 const batchResults = await Promise.allSettled(
-                    batch.map(lead => Promise.race([
-                        runIntelligence(
-                            { ...lead, company_id: companyId },
-                            { autoOutreach, browser: sharedBrowser } // autoOutreach is passed down to optionally skip Gap AI
-                        ),
-                        new Promise(resolve => setTimeout(() => {
-                            logger.error(`[Scraper Worker] Hard timeout triggered for lead: ${lead.businessName}`);
-                            resolve(lead); // Return raw lead safely if pipeline freezes
-                        }, 120000))
-                    ]))
+                    batch.map(lead => {
+                        let timeoutId;
+                        const timeoutPromise = new Promise(resolve => {
+                            timeoutId = setTimeout(() => {
+                                logger.error(`[Scraper Worker] Hard timeout triggered for lead: ${lead.businessName}`);
+                                resolve(lead); // Return raw lead safely if pipeline freezes
+                            }, 120000);
+                        });
+                        
+                        return Promise.race([
+                            runIntelligence(
+                                { ...lead, company_id: companyId },
+                                { autoOutreach, browser: sharedBrowser }
+                            ),
+                            timeoutPromise
+                        ]).finally(() => clearTimeout(timeoutId));
+                    })
                 );
                 
                 const batchLeads = batchResults
