@@ -5,80 +5,6 @@ import 'leaflet/dist/leaflet.css';
 import RegionPanel from './RegionPanel';
 import { getGeoStats } from '../../api/client';
 
-// ─── Known location coordinates (expandable dictionary) ───────────────
-const LOCATION_COORDS = {
-    // Singapore
-    'singapore': [1.3521, 103.8198],
-    'sentosa': [1.2494, 103.8303],
-    'marina bay': [1.2814, 103.8585],
-    'orchard': [1.3048, 103.8318],
-    'jurong': [1.3329, 103.7436],
-    'changi': [1.3644, 103.9915],
-    'tampines': [1.3496, 103.9568],
-    'woodlands': [1.4382, 103.7891],
-    'bugis': [1.3009, 103.8554],
-    'chinatown': [1.2836, 103.8443],
-    // India
-    'mumbai': [19.0760, 72.8777],
-    'delhi': [28.6139, 77.2090],
-    'bangalore': [12.9716, 77.5946],
-    'bengaluru': [12.9716, 77.5946],
-    'chennai': [13.0827, 80.2707],
-    'hyderabad': [17.3850, 78.4867],
-    'pune': [18.5204, 73.8567],
-    'kolkata': [22.5726, 88.3639],
-    'jaipur': [26.9124, 75.7873],
-    'ahmedabad': [23.0225, 72.5714],
-    'goa': [15.2993, 74.1240],
-    'kochi': [9.9312, 76.2673],
-    // UAE
-    'dubai': [25.2048, 55.2708],
-    'abu dhabi': [24.4539, 54.3773],
-    // USA
-    'new york': [40.7128, -74.0060],
-    'los angeles': [34.0522, -118.2437],
-    'san francisco': [37.7749, -122.4194],
-    'miami': [25.7617, -80.1918],
-    'chicago': [41.8781, -87.6298],
-    // UK
-    'london': [51.5074, -0.1278],
-    'manchester': [53.4808, -2.2426],
-    // Australia
-    'sydney': [-33.8688, 151.2093],
-    'melbourne': [-37.8136, 144.9631],
-    // Southeast Asia
-    'bangkok': [13.7563, 100.5018],
-    'kuala lumpur': [3.1390, 101.6869],
-    'jakarta': [-6.2088, 106.8456],
-    'ho chi minh': [10.8231, 106.6297],
-    'manila': [14.5995, 120.9842],
-    // Others
-    'tokyo': [35.6762, 139.6503],
-    'hong kong': [22.3193, 114.1694],
-    'toronto': [43.6532, -79.3832],
-    'paris': [48.8566, 2.3522],
-    'berlin': [52.5200, 13.4050],
-};
-
-/**
- * Attempts to geocode a campaign name / location string by matching against
- * the known LOCATION_COORDS dictionary. Returns [lat, lng] or null.
- */
-const geocodeCampaignName = (name, topLocation) => {
-    const searchStrings = [name, topLocation].filter(Boolean).map(s => s.toLowerCase());
-
-    for (const str of searchStrings) {
-        // Try exact match first
-        if (LOCATION_COORDS[str]) return LOCATION_COORDS[str];
-
-        // Try partial match — check if any known location key is contained in the string
-        for (const [key, coords] of Object.entries(LOCATION_COORDS)) {
-            if (str.includes(key)) return coords;
-        }
-    }
-    return null;
-};
-
 // ─── Custom pulsing marker icon ───────────────────────────────────────
 const createPulsingIcon = (leadsCount) => {
     const size = Math.min(20 + Math.sqrt(leadsCount) * 4, 48);
@@ -160,21 +86,17 @@ const MapCommandCenter = ({ companyId }) => {
         fetchGeoData();
     }, [companyId]);
 
-    // Process campaigns into map markers
+    // Process campaigns into map markers (lat/lng are geocoded server-side, see geo-stats endpoint)
     const markers = useMemo(() => {
         return geoData
-            .map(campaign => {
-                const coords = geocodeCampaignName(campaign.campaign_name, campaign.top_location);
-                if (!coords) return null;
-                return {
-                    ...campaign,
-                    coords,
-                    responseRate: campaign.total_leads > 0
-                        ? Math.round((campaign.responded / campaign.total_leads) * 100)
-                        : 0,
-                };
-            })
-            .filter(Boolean);
+            .filter(campaign => campaign.lat != null && campaign.lng != null)
+            .map(campaign => ({
+                ...campaign,
+                coords: [campaign.lat, campaign.lng],
+                responseRate: campaign.total_leads > 0
+                    ? Math.round((campaign.responded / campaign.total_leads) * 100)
+                    : 0,
+            }));
     }, [geoData]);
 
     const handleMarkerClick = useCallback((marker) => {
@@ -239,7 +161,7 @@ const MapCommandCenter = ({ companyId }) => {
                         <div className="text-4xl mb-4">🌍</div>
                         <h3 className="text-lg font-black text-white uppercase tracking-tight italic mb-2">No Mapped Campaigns Yet</h3>
                         <p className="text-sm font-bold text-slate-500 max-w-md text-center">
-                            Run intelligence searches with location keywords (e.g., "Resorts in Sentosa, Singapore") and they'll appear here as geographic markers.
+                            Once leads with a recognizable location come in, campaigns will appear here as geographic markers.
                         </p>
                     </div>
                 ) : (
@@ -283,7 +205,7 @@ const MapCommandCenter = ({ companyId }) => {
                 <div className="p-4 rounded-2xl bg-amber-500/5 border border-amber-500/10 flex items-center gap-3">
                     <span className="text-amber-400 text-sm">⚠️</span>
                     <span className="text-[10px] font-black text-amber-400/70 uppercase tracking-widest">
-                        {unmappedCampaigns} campaign{unmappedCampaigns > 1 ? 's' : ''} could not be mapped — add location keywords to campaign names for better coverage.
+                        {unmappedCampaigns} campaign{unmappedCampaigns > 1 ? 's' : ''} could not be mapped — their lead locations weren't recognized by the geocoder.
                     </span>
                 </div>
             )}

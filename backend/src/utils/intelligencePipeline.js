@@ -3,6 +3,14 @@ const { scoreIntent } = require('./intentScorer');
 const { resolveOutreachByPillar } = require('../ai/pillarMessages');
 const { processGapIntelligence, computeGapsFromAnalysis } = require('../ai/gapMapper');
 
+// Scoped override, same fix as proposals.js: the shared default GROQ_MODEL
+// (qwen/qwen3.6-27b) is a reasoning model that burns ~800+ hidden <think>
+// tokens (~2s) per lead on this 2-field classification alone. gpt-oss-20b
+// answers it directly in ~170 reasoning tokens (~0.5-0.7s) — this call runs
+// once per lead during Auto-Enrich, so the difference compounds across a batch.
+const GAP_CLASSIFIER_MODEL = process.env.GAP_CLASSIFIER_LLM_MODEL || 'openai/gpt-oss-20b';
+const GAP_CLASSIFIER_MAX_TOKENS = 500;
+
 /**
  * Runs the complete AI intelligence pipeline for a lead.
  * @param {Object} lead - Normalized lead data
@@ -77,7 +85,7 @@ Return ONLY this JSON (no extra text):
   "service_fit": "2 sentence summary of why they need our digital growth services"
 }`;
 
-                const rawAiOutput = await generalPrompt(slimPrompt);
+                const rawAiOutput = await generalPrompt(slimPrompt, { model: GAP_CLASSIFIER_MODEL, maxTokens: GAP_CLASSIFIER_MAX_TOKENS });
                 const jsonMatch = rawAiOutput.match(/\{[\s\S]*\}/);
 
                 const aiFields = jsonMatch ? JSON.parse(jsonMatch[0]) : {};

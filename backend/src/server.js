@@ -51,6 +51,7 @@ app.use(express.json());
 app.use('/uploads', express.static(path.join(__dirname, '../uploads')));
 const r2Route = require('./routes/r2');
 const proposalsRoute = require('./routes/proposals');
+const servicesRoute = require('./routes/services');
 
 app.use('/leads', leadsRoute);
 app.use('/companies', companiesRoute);
@@ -60,6 +61,7 @@ app.use('/discovery', discoveryRoute);
 app.use('/replies', repliesRoute);
 app.use('/whatsapp', whatsappRoute);
 app.use('/proposals', proposalsRoute);
+app.use('/services', servicesRoute);
 app.use('/api/r2', r2Route);
 
 app.get('/', async (req, res) => {

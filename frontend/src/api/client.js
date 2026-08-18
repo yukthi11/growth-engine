@@ -211,4 +211,9 @@ export const getProposalAutofill = async (leadId) => {
     return response.data;
 };
 
+export const getServices = async () => {
+    const response = await client.get('/services');
+    return response.data;
+};
+
 export default client;

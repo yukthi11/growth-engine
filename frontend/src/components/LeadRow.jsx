@@ -21,7 +21,7 @@ const STATUS_THEMES = {
     ignored: 'bg-slate-500/10 text-slate-500 border-white/5'
 };
 
-const LeadRow = ({ lead, onUpdate, onViewMessages, onEdit, onDelete, onOpenOutreachStatus }) => {
+const LeadRow = ({ lead, onUpdate, onViewMessages, onEdit, onDelete, onOpenOutreachStatus, onGenerateProposal }) => {
     const [isUpdating, setIsUpdating] = useState(false);
     const [showGap, setShowGap] = useState(false);
     const [showMockupModal, setShowMockupModal] = useState(false);
@@ -54,8 +54,11 @@ const LeadRow = ({ lead, onUpdate, onViewMessages, onEdit, onDelete, onOpenOutre
         Messages: () => <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M8 10h.01M12 10h.01M16 10h.01M9 16H5a2 2 0 01-2-2V6a2 2 0 012-2h14a2 2 0 012 2v8a2 2 0 01-2 2h-5l-5 5v-5z" /></svg>,
         Edit: () => <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M15.232 5.232l3.536 3.536m-2.036-5.036a2.5 2.5 0 113.536 3.536L6.5 21.036H3v-3.572L16.732 3.732z" /></svg>,
         Delete: () => <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" /></svg>,
-        Logs: () => <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
+        Logs: () => <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
+        Proposal: () => <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 17h6m-6-4h6m2 8H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>
     };
+
+    const isHighIntent = lead.tier === 'hot' || lead.tier === 'warm';
 
     return (
         <tr className="hover:bg-white/5 transition-colors group">
@@ -307,6 +310,17 @@ const LeadRow = ({ lead, onUpdate, onViewMessages, onEdit, onDelete, onOpenOutre
                     title="Correct Lead Details"
                 >
                     <Icons.Edit />
+                </button>
+
+                <button
+                    onClick={() => onGenerateProposal(lead)}
+                    className={`p-2 rounded-lg border transition-all ${isHighIntent
+                        ? 'bg-violet-500/10 hover:bg-violet-500/20 text-violet-400 border-violet-500/20'
+                        : 'bg-white/5 hover:bg-violet-500/20 text-slate-500 hover:text-violet-400 border-white/5'
+                    }`}
+                    title="Generate Proposal from this lead's gap analysis"
+                >
+                    <Icons.Proposal />
                 </button>
 
                 <div className="relative">

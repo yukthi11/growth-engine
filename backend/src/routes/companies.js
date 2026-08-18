@@ -2,6 +2,7 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const { generateSummaries } = require('../services/companySummarizer');
+const { geocodeLocation } = require('../utils/geocoder');
 const multer = require('multer');
 const path = require('path');
 
@@ -121,7 +122,8 @@ router.patch('/:id', async (req, res) => {
  * GET /:id/geo-stats
  * Returns campaign-level location aggregation for the geospatial command center.
  * Groups leads by campaign, and extracts location data from campaign names & lead locations.
- * Includes per-channel pending message counts (WhatsApp vs Email).
+ * Includes per-channel pending message counts (WhatsApp vs Email), plus geocoded
+ * lat/lng for each campaign's most common lead location (see utils/geocoder.js).
  */
 router.get('/:id/geo-stats', async (req, res) => {
     const { id } = req.params;
@@ -149,7 +151,15 @@ router.get('/:id/geo-stats', async (req, res) => {
             ORDER BY COUNT(DISTINCT l.id) DESC
         `, [id]);
 
-        res.json(result.rows);
+        // Sequential (not Promise.all) so uncached lookups respect Nominatim's rate limit.
+        const campaigns = [];
+        for (const campaign of result.rows) {
+            const coords = (await geocodeLocation(campaign.top_location))
+                || (await geocodeLocation(campaign.campaign_name));
+            campaigns.push({ ...campaign, lat: coords?.lat ?? null, lng: coords?.lng ?? null });
+        }
+
+        res.json(campaigns);
     } catch (err) {
         console.error('[Geo Stats Error]:', err.message);
         res.status(500).json({ error: 'Failed to fetch geo stats' });

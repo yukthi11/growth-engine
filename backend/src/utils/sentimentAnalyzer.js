@@ -1,6 +1,12 @@
 const { generalPrompt } = require("../scrapers/llmExtractor");
 require('dotenv').config();
 
+// Same fix as proposals.js/intelligencePipeline.js: the shared default GROQ_MODEL
+// (a reasoning model) burns 2-4x the tokens/latency of a non-reasoning model on
+// this trivial 1-field classification, and this runs on every inbound reply.
+const SENTIMENT_LLM_MODEL = process.env.SENTIMENT_LLM_MODEL || 'openai/gpt-oss-20b';
+const SENTIMENT_LLM_MAX_TOKENS = 100;
+
 /**
  * Analyzes a lead's reply to determine if they are interested or want to stop.
  * @param {string} messageText 
@@ -20,7 +26,7 @@ async function analyzeReply(messageText) {
     `;
 
     try {
-        const text = await generalPrompt(prompt, 'simple');
+        const text = await generalPrompt(prompt, { model: SENTIMENT_LLM_MODEL, maxTokens: SENTIMENT_LLM_MAX_TOKENS });
         const categoryData = JSON.parse(text);
         return categoryData;
     } catch (error) {

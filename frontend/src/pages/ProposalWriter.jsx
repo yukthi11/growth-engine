@@ -1,5 +1,20 @@
-import React, { useState, useEffect } from 'react';
-import { getLeads, getProposalAutofill, generateProposal } from '../api/client';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
+import { getLeads, getProposalAutofill, generateProposal, getServices } from '../api/client';
+
+const DEFAULT_MILESTONE_SPLIT = [
+    { label: 'Upfront', percentage: 50 },
+    { label: 'On Completion', percentage: 50 },
+];
+
+const formatINR = (amount) => `₹${Math.round(amount).toLocaleString('en-IN')}`;
+
+const formatTotals = (oneTime, monthly) => {
+    if (oneTime === 0 && monthly === 0) return 'TBD';
+    const parts = [];
+    if (oneTime > 0) parts.push(formatINR(oneTime));
+    if (monthly > 0) parts.push(`${formatINR(monthly)}/month`);
+    return parts.join(' + ');
+};
 
 const CustomIcons = {
     Document: () => <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M9 12h6m-6 4h6m2 5H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" /></svg>,
@@ -13,9 +28,18 @@ const CustomIcons = {
     Briefcase: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
 };
 
-const ProposalWriter = ({ companyId }) => {
+const TIER_RANK = { hot: 0, warm: 1, cold: 2 };
+const TIER_BADGE = {
+    hot: 'bg-orange-500/10 text-orange-400 border-orange-500/20',
+    warm: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/20',
+};
+
+const ProposalWriter = ({ companyId, initialLeadId }) => {
     // Form Inputs
     const [selectedLeadId, setSelectedLeadId] = useState('');
+    const [leadQuery, setLeadQuery] = useState('');
+    const [isLeadDropdownOpen, setIsLeadDropdownOpen] = useState(false);
+    const appliedInitialLeadRef = useRef(null);
     const [businessName, setBusinessName] = useState('');
     const [projectName, setProjectName] = useState('');
     const [industry, setIndustry] = useState('');
@@ -25,29 +49,47 @@ const ProposalWriter = ({ companyId }) => {
     const [desiredOutcome, setDesiredOutcome] = useState('');
     const [customNotes, setCustomNotes] = useState('');
     const [timeline, setTimeline] = useState('');
-    const [pricing, setPricing] = useState('');
-    const [milestones, setMilestones] = useState('');
-    const [selectedServices, setSelectedServices] = useState([]);
+    // lineItems: { [serviceId]: { service, quantity, unit_price, monthly_price } }
+    // unit_price/monthly_price default to the catalog's base price but are freely
+    // editable per-proposal — the catalog price is only ever a starting point.
+    const [lineItems, setLineItems] = useState({});
+    const [milestoneSplit, setMilestoneSplit] = useState(DEFAULT_MILESTONE_SPLIT);
 
     // UI States
     const [leads, setLeads] = useState([]);
+    const [catalog, setCatalog] = useState([]);
     const [isAutofilling, setIsAutofilling] = useState(false);
     const [isGenerating, setIsGenerating] = useState(false);
     const [proposal, setProposal] = useState(null);
     const [copied, setCopied] = useState(false);
 
-    const availableServices = [
-        'The WhatsApp Assistant',
-        'The Smart Booking System',
-        'The Live Owner Dashboard',
-        'The Attendance Manager',
-        'The Lead Tracker',
-        'The Reporting Center',
-        'Local Google Maps Optimization',
-        'Google Business Profile Review Automation'
-    ];
+    const catalogByCategory = useMemo(() => {
+        return catalog.reduce((acc, service) => {
+            acc[service.category] = acc[service.category] || [];
+            acc[service.category].push(service);
+            return acc;
+        }, {});
+    }, [catalog]);
 
-    // Load leads for the active workspace company
+    const { oneTimeTotal, monthlyTotal } = useMemo(() => {
+        return Object.values(lineItems).reduce(
+            (totals, item) => {
+                totals.oneTimeTotal += Number(item.unit_price || 0) * Number(item.quantity || 1);
+                totals.monthlyTotal += Number(item.monthly_price || 0) * Number(item.quantity || 1);
+                return totals;
+            },
+            { oneTimeTotal: 0, monthlyTotal: 0 }
+        );
+    }, [lineItems]);
+
+    const pricingSummary = formatTotals(oneTimeTotal, monthlyTotal);
+    const milestonePercentTotal = milestoneSplit.reduce((sum, m) => sum + Number(m.percentage || 0), 0);
+
+    // Load leads + service catalog for the active workspace company
+    useEffect(() => {
+        fetchCatalog();
+    }, []);
+
     useEffect(() => {
         if (companyId) {
             fetchLeadsList();
@@ -57,12 +99,30 @@ const ProposalWriter = ({ companyId }) => {
         }
     }, [companyId]);
 
+    // Auto-select the lead handed off from the leads table's "Generate Proposal"
+    // quick action, once — guarded by ref so it doesn't refire on every leads refresh.
+    useEffect(() => {
+        if (initialLeadId && leads.length > 0 && appliedInitialLeadRef.current !== initialLeadId) {
+            appliedInitialLeadRef.current = initialLeadId;
+            selectLead(initialLeadId);
+        }
+    }, [initialLeadId, leads]);
+
     const fetchLeadsList = async () => {
         try {
             const res = await getLeads(companyId, 1, 100); // Fetch first 100 leads
             setLeads(res.data || []);
         } catch (err) {
             console.error('Failed to fetch leads for proposal dropdown:', err);
+        }
+    };
+
+    const fetchCatalog = async () => {
+        try {
+            const res = await getServices();
+            setCatalog(res.services || []);
+        } catch (err) {
+            console.error('Failed to fetch service catalog:', err);
         }
     };
 
@@ -77,15 +137,36 @@ const ProposalWriter = ({ companyId }) => {
         setDesiredOutcome('');
         setCustomNotes('');
         setTimeline('');
-        setPricing('');
-        setMilestones('');
-        setSelectedServices([]);
+        setLineItems({});
+        setMilestoneSplit(DEFAULT_MILESTONE_SPLIT);
     };
 
-    // Trigger AI Autofill when lead changes
-    const handleLeadChange = async (e) => {
-        const leadId = e.target.value;
+    // Sorted (hot -> warm -> cold/new) + search-filtered lead list for the combobox
+    const sortedLeads = useMemo(() => {
+        return [...leads].sort((a, b) => {
+            const rankDiff = (TIER_RANK[a.tier] ?? 3) - (TIER_RANK[b.tier] ?? 3);
+            if (rankDiff !== 0) return rankDiff;
+            return (a.business_name || '').localeCompare(b.business_name || '');
+        });
+    }, [leads]);
+
+    const filteredLeads = useMemo(() => {
+        const q = leadQuery.trim().toLowerCase();
+        if (!q) return sortedLeads;
+        return sortedLeads.filter((lead) =>
+            lead.business_name?.toLowerCase().includes(q) ||
+            lead.location_normalized?.toLowerCase().includes(q)
+        );
+    }, [sortedLeads, leadQuery]);
+
+    const selectedLead = leads.find((lead) => String(lead.id) === String(selectedLeadId));
+
+    // Triggers AI Autofill for a given lead — shared by the search dropdown and
+    // the "Generate Proposal" quick-action from the leads table (initialLeadId).
+    const selectLead = async (leadId) => {
         setSelectedLeadId(leadId);
+        setIsLeadDropdownOpen(false);
+        setLeadQuery('');
         if (!leadId) {
             resetForm();
             return;
@@ -102,9 +183,20 @@ const ProposalWriter = ({ companyId }) => {
             setCurrentProcess(autofill.current_process || '');
             setDesiredOutcome(autofill.desired_outcome || '');
             setTimeline(autofill.timeline || '4 Weeks');
-            setPricing(autofill.pricing || '');
-            setMilestones(autofill.milestones || '');
-            setSelectedServices(autofill.selected_services || []);
+
+            // Pre-check the services matched deterministically from this lead's
+            // detected gaps (see backend/src/utils/serviceMatcher.js), seeded with
+            // catalog base prices — still fully editable below before generating.
+            const seeded = {};
+            (autofill.recommended_services || []).forEach((service) => {
+                seeded[service.id] = {
+                    service,
+                    quantity: 1,
+                    unit_price: Number(service.base_price || 0),
+                    monthly_price: Number(service.monthly_price || 0),
+                };
+            });
+            setLineItems(seeded);
         } catch (err) {
             console.error('Error autofilling lead proposal details:', err);
             alert('Failed to autofill details. Please enter manually.');
@@ -114,11 +206,41 @@ const ProposalWriter = ({ companyId }) => {
     };
 
     const handleServiceToggle = (service) => {
-        setSelectedServices(prev => 
-            prev.includes(service) 
-                ? prev.filter(s => s !== service) 
-                : [...prev, service]
+        setLineItems((prev) => {
+            const next = { ...prev };
+            if (next[service.id]) {
+                delete next[service.id];
+            } else {
+                next[service.id] = {
+                    service,
+                    quantity: 1,
+                    unit_price: Number(service.base_price || 0),
+                    monthly_price: Number(service.monthly_price || 0),
+                };
+            }
+            return next;
+        });
+    };
+
+    const handleLineItemFieldChange = (serviceId, field, value) => {
+        setLineItems((prev) => ({
+            ...prev,
+            [serviceId]: { ...prev[serviceId], [field]: value },
+        }));
+    };
+
+    const handleMilestoneChange = (index, field, value) => {
+        setMilestoneSplit((prev) =>
+            prev.map((m, i) => (i === index ? { ...m, [field]: value } : m))
         );
+    };
+
+    const addMilestone = () => {
+        setMilestoneSplit((prev) => [...prev, { label: 'New Milestone', percentage: 0 }]);
+    };
+
+    const removeMilestone = (index) => {
+        setMilestoneSplit((prev) => prev.filter((_, i) => i !== index));
     };
 
     // Handle Proposal Generation
@@ -132,6 +254,7 @@ const ProposalWriter = ({ companyId }) => {
         setIsGenerating(true);
         setProposal(null);
         try {
+            const items = Object.values(lineItems);
             const data = {
                 business_name: businessName,
                 industry,
@@ -140,11 +263,18 @@ const ProposalWriter = ({ companyId }) => {
                 problem,
                 current_process: currentProcess,
                 desired_outcome: desiredOutcome,
-                selected_services: selectedServices,
+                selected_services: items.map((item) => item.service.name),
                 notes: customNotes,
                 timeline,
-                pricing,
-                milestones
+                // Structured pricing — total and milestone amounts are computed
+                // server-side from these, never invented by the LLM.
+                line_items: items.map((item) => ({
+                    name: item.service.name,
+                    unit_price: Number(item.unit_price || 0),
+                    monthly_price: Number(item.monthly_price || 0),
+                    quantity: Number(item.quantity || 1),
+                })),
+                milestone_split: milestoneSplit.map((m) => ({ label: m.label, percentage: Number(m.percentage || 0) })),
             };
             const result = await generateProposal(data);
             setProposal(result);
@@ -213,8 +343,8 @@ const ProposalWriter = ({ companyId }) => {
             });
         }
         markdown += `\n`;
-        markdown += `* **Total Project Investment**: ${proposal.final_summary?.total_investment || pricing}\n`;
-        markdown += `* **Payment Structure**: ${proposal.final_summary?.payment_structure || milestones}\n`;
+        markdown += `* **Total Project Investment**: ${proposal.final_summary?.total_investment || pricingSummary}\n`;
+        markdown += `* **Payment Structure**: ${proposal.final_summary?.payment_structure || milestoneSplit.map(m => `${m.percentage}% ${m.label}`).join(', ')}\n`;
         markdown += `* **Support Included**: ${proposal.final_summary?.support_included || '30 Days Post-Launch Optimization'}\n`;
         markdown += `* **Timeline**: ${proposal.final_summary?.expected_delivery || timeline}\n`;
 
@@ -299,23 +429,47 @@ const ProposalWriter = ({ companyId }) => {
                     </h3>
                     
                     <div className="space-y-4">
-                        {/* Lead Selector */}
-                        <div className="flex flex-col gap-2">
+                        {/* Lead Selector — searchable, sorted hot -> warm -> cold */}
+                        <div className="flex flex-col gap-2 relative">
                             <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
                                 Load from Database (Autofill)
                             </label>
-                            <select
-                                value={selectedLeadId}
-                                onChange={handleLeadChange}
-                                className="bg-[#0a0f1d] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-violet-500 transition-all cursor-pointer"
-                            >
-                                <option value="">-- Manual Entry / Select a Lead --</option>
-                                {leads.map(lead => (
-                                    <option key={lead.id} value={lead.id}>
-                                        🏢 {lead.business_name} ({lead.location_normalized || 'No Location'})
-                                    </option>
-                                ))}
-                            </select>
+                            <input
+                                type="text"
+                                value={isLeadDropdownOpen ? leadQuery : (selectedLead ? `🏢 ${selectedLead.business_name} (${selectedLead.location_normalized || 'No Location'})` : '')}
+                                onChange={(e) => setLeadQuery(e.target.value)}
+                                onFocus={() => { setIsLeadDropdownOpen(true); setLeadQuery(''); }}
+                                onBlur={() => setTimeout(() => setIsLeadDropdownOpen(false), 150)}
+                                placeholder="Type to search leads by name or location..."
+                                className="bg-[#0a0f1d] border border-white/10 rounded-2xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-violet-500 transition-all"
+                            />
+                            {isLeadDropdownOpen && (
+                                <div className="absolute z-20 top-full mt-1 w-full max-h-72 overflow-y-auto bg-[#0a0f1d] border border-white/10 rounded-2xl shadow-2xl">
+                                    <div
+                                        onMouseDown={() => selectLead('')}
+                                        className="px-4 py-2.5 cursor-pointer text-xs font-bold text-slate-500 hover:bg-white/5 hover:text-white transition-colors"
+                                    >
+                                        -- Manual Entry --
+                                    </div>
+                                    {filteredLeads.length === 0 && (
+                                        <div className="px-4 py-3 text-xs font-bold text-slate-600">No matching leads</div>
+                                    )}
+                                    {filteredLeads.map((lead) => (
+                                        <div
+                                            key={lead.id}
+                                            onMouseDown={() => selectLead(lead.id)}
+                                            className="px-4 py-2.5 cursor-pointer flex items-center justify-between gap-2 hover:bg-violet-600/10 transition-colors"
+                                        >
+                                            <span className="text-xs font-bold text-white truncate">🏢 {lead.business_name} <span className="text-slate-500">({lead.location_normalized || 'No Location'})</span></span>
+                                            {TIER_BADGE[lead.tier] && (
+                                                <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${TIER_BADGE[lead.tier]}`}>
+                                                    {lead.tier}
+                                                </span>
+                                            )}
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
                         </div>
 
                         {isAutofilling && (
@@ -407,56 +561,130 @@ const ProposalWriter = ({ companyId }) => {
                                 />
                             </div>
 
-                            {/* Services Checkbox List */}
+                            {/* Service Catalog Picker */}
                             <div className="flex flex-col gap-2">
                                 <label className="text-[9px] font-black uppercase text-slate-500">Include Systems & Services</label>
-                                <div className="grid grid-cols-1 md:grid-cols-2 gap-2 bg-white/[0.01] border border-white/5 rounded-2xl p-4">
-                                    {availableServices.map(service => (
-                                        <label key={service} className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-400 hover:text-white transition-colors">
-                                            <input
-                                                type="checkbox"
-                                                checked={selectedServices.includes(service)}
-                                                onChange={() => handleServiceToggle(service)}
-                                                className="rounded border-white/10 text-violet-600 focus:ring-violet-500"
-                                            />
-                                            {service}
-                                        </label>
+                                <div className="flex flex-col gap-4 bg-white/[0.01] border border-white/5 rounded-2xl p-4">
+                                    {Object.keys(catalogByCategory).length === 0 && (
+                                        <p className="text-xs font-bold text-slate-600">Loading catalog...</p>
+                                    )}
+                                    {Object.entries(catalogByCategory).map(([category, services]) => (
+                                        <div key={category} className="flex flex-col gap-2">
+                                            <span className="text-[9px] font-black uppercase text-violet-400 tracking-widest">{category}</span>
+                                            <div className="flex flex-col gap-2">
+                                                {services.map(service => {
+                                                    const item = lineItems[service.id];
+                                                    const isSelected = !!item;
+                                                    return (
+                                                        <div key={service.id} className="flex flex-col gap-2 border-b border-white/5 pb-2 last:border-b-0 last:pb-0">
+                                                            <label className="flex items-center gap-2 cursor-pointer text-xs font-bold text-slate-400 hover:text-white transition-colors">
+                                                                <input
+                                                                    type="checkbox"
+                                                                    checked={isSelected}
+                                                                    onChange={() => handleServiceToggle(service)}
+                                                                    className="rounded border-white/10 text-violet-600 focus:ring-violet-500"
+                                                                />
+                                                                {service.name}
+                                                            </label>
+                                                            {isSelected && (
+                                                                <div className="flex items-center gap-2 pl-6">
+                                                                    {service.price_type !== 'custom_quote' && (
+                                                                        <>
+                                                                            {service.price_type !== 'monthly' && (
+                                                                                <input
+                                                                                    type="number"
+                                                                                    value={item.unit_price}
+                                                                                    onChange={(e) => handleLineItemFieldChange(service.id, 'unit_price', e.target.value)}
+                                                                                    className="w-28 bg-white/5 border border-white/5 rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-violet-500"
+                                                                                    placeholder="One-time ₹"
+                                                                                />
+                                                                            )}
+                                                                            {(service.price_type === 'monthly' || service.price_type === 'one_time_plus_monthly') && (
+                                                                                <input
+                                                                                    type="number"
+                                                                                    value={item.monthly_price}
+                                                                                    onChange={(e) => handleLineItemFieldChange(service.id, 'monthly_price', e.target.value)}
+                                                                                    className="w-28 bg-white/5 border border-white/5 rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-violet-500"
+                                                                                    placeholder="Monthly ₹"
+                                                                                />
+                                                                            )}
+                                                                        </>
+                                                                    )}
+                                                                    <input
+                                                                        type="number"
+                                                                        min="1"
+                                                                        value={item.quantity}
+                                                                        onChange={(e) => handleLineItemFieldChange(service.id, 'quantity', e.target.value)}
+                                                                        className="w-16 bg-white/5 border border-white/5 rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-violet-500"
+                                                                        title="Quantity"
+                                                                    />
+                                                                    {service.price_type === 'custom_quote' && (
+                                                                        <span className="text-[10px] font-bold text-slate-600 uppercase">Custom quote — priced outside this proposal</span>
+                                                                    )}
+                                                                </div>
+                                                            )}
+                                                        </div>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
                                     ))}
                                 </div>
-                            </div>
-
-                            <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[9px] font-black uppercase text-slate-500">Delivery Timeline</label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. 3 Weeks"
-                                        value={timeline}
-                                        onChange={(e) => setTimeline(e.target.value)}
-                                        className="bg-white/5 border border-white/5 rounded-2xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-violet-500 transition-all font-sans"
-                                    />
-                                </div>
-                                <div className="flex flex-col gap-1.5">
-                                    <label className="text-[9px] font-black uppercase text-slate-500">Project Pricing</label>
-                                    <input
-                                        type="text"
-                                        placeholder="e.g. ₹45,000"
-                                        value={pricing}
-                                        onChange={(e) => setPricing(e.target.value)}
-                                        className="bg-white/5 border border-white/5 rounded-2xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-violet-500 transition-all font-sans"
-                                    />
+                                <div className="flex items-center justify-between px-1">
+                                    <span className="text-[9px] font-black uppercase text-slate-500">Live Total</span>
+                                    <span className="text-sm font-black text-violet-400">{pricingSummary}</span>
                                 </div>
                             </div>
 
                             <div className="flex flex-col gap-1.5">
-                                <label className="text-[9px] font-black uppercase text-slate-500">Milestone Payments</label>
+                                <label className="text-[9px] font-black uppercase text-slate-500">Delivery Timeline</label>
                                 <input
                                     type="text"
-                                    placeholder="e.g. 50% initiation fee / 50% delivery"
-                                    value={milestones}
-                                    onChange={(e) => setMilestones(e.target.value)}
+                                    placeholder="e.g. 3 Weeks"
+                                    value={timeline}
+                                    onChange={(e) => setTimeline(e.target.value)}
                                     className="bg-white/5 border border-white/5 rounded-2xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-violet-500 transition-all font-sans"
                                 />
+                            </div>
+
+                            {/* Milestone Split Builder — percentages of the computed total above, not free text */}
+                            <div className="flex flex-col gap-2">
+                                <div className="flex items-center justify-between">
+                                    <label className="text-[9px] font-black uppercase text-slate-500">Payment Milestones</label>
+                                    <span className={`text-[9px] font-black uppercase ${milestonePercentTotal === 100 ? 'text-emerald-500' : 'text-amber-500'}`}>
+                                        {milestonePercentTotal}% allocated
+                                    </span>
+                                </div>
+                                <div className="flex flex-col gap-2 bg-white/[0.01] border border-white/5 rounded-2xl p-4">
+                                    {milestoneSplit.map((m, idx) => (
+                                        <div key={idx} className="flex items-center gap-2">
+                                            <input
+                                                type="text"
+                                                value={m.label}
+                                                onChange={(e) => handleMilestoneChange(idx, 'label', e.target.value)}
+                                                className="flex-1 bg-white/5 border border-white/5 rounded-lg px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-violet-500"
+                                                placeholder="Milestone label"
+                                            />
+                                            <input
+                                                type="number"
+                                                value={m.percentage}
+                                                onChange={(e) => handleMilestoneChange(idx, 'percentage', e.target.value)}
+                                                className="w-20 bg-white/5 border border-white/5 rounded-lg px-3 py-2 text-xs font-bold text-white focus:outline-none focus:border-violet-500"
+                                            />
+                                            <span className="text-xs font-bold text-slate-500">%</span>
+                                            {milestoneSplit.length > 1 && (
+                                                <button type="button" onClick={() => removeMilestone(idx)} className="text-slate-600 hover:text-red-400 text-xs font-black px-1">✕</button>
+                                            )}
+                                        </div>
+                                    ))}
+                                    <button
+                                        type="button"
+                                        onClick={addMilestone}
+                                        className="text-[10px] font-black uppercase text-violet-400 hover:text-violet-300 self-start"
+                                    >
+                                        + Add Milestone
+                                    </button>
+                                </div>
                             </div>
 
                             <div className="flex flex-col gap-1.5">

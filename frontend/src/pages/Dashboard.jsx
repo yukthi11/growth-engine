@@ -53,6 +53,7 @@ const Dashboard = () => {
     const [discoverySource, setDiscoverySource] = useState('auto');
     const [discoveryResult, setDiscoveryResult] = useState(null);
     const [selectedInboxLead, setSelectedInboxLead] = useState(null);
+    const [proposalLeadId, setProposalLeadId] = useState(null);
     const [isCompanyModalOpen, setIsCompanyModalOpen] = useState(false);
     const [isAddingCompany, setIsAddingCompany] = useState(false);
     const [page, setPage] = useState(1);
@@ -556,6 +557,10 @@ const Dashboard = () => {
                                 onEdit={openEditModal}
                                 onDelete={handleDeleteLead}
                                 onOpenOutreachStatus={openOutreachStatusModal}
+                                onGenerateProposal={(lead) => {
+                                    setProposalLeadId(lead.id);
+                                    setActiveTab('proposals');
+                                }}
                             />
                         </div>
 
@@ -761,7 +766,7 @@ const Dashboard = () => {
                     campaigns={campaigns}
                 />;
             case 'proposals':
-                return <ProposalWriter companyId={selectedCompanyId} />;
+                return <ProposalWriter companyId={selectedCompanyId} initialLeadId={proposalLeadId} />;
             default: return null;
         }
     };

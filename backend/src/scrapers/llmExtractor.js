@@ -228,10 +228,13 @@ async function searchAndExtract(page, url, logFn = console.log) {
 // DRY CORE LLM ROUTER (Supports Gemini, Groq, OpenAI, Ollama)
 // =============================================================================
 async function callLLM(customPrompt, options = {}) {
-    const { 
-        tier = 'fast', 
-        isJson = false, 
-        forceProvider = null 
+    const {
+        tier = 'fast',
+        isJson = false,
+        forceProvider = null,
+        model: modelOverride = null,   // per-call model override (e.g. a non-reasoning model for a specific route)
+        maxTokens = null                // per-call output cap — required for reasoning models, whose hidden
+                                         // <think> tokens can otherwise silently consume the whole budget
     } = options;
 
     const provider = forceProvider || process.env.LLM_PROVIDER || 'ollama';
@@ -251,18 +254,21 @@ async function callLLM(customPrompt, options = {}) {
                 return cleanTextResponse(result.response.text());
             }, 'Gemini/Flash-Latest');
 
-        case 'groq':
+        case 'groq': {
             if (!process.env.GROQ_API_KEY) throw new Error('GROQ_API_KEY not configured in env');
+            const groqModel = modelOverride || GROQ_MODEL;
             await _acquireToken('groq');
             return await _withRetry(async () => {
                 const completion = await withTimeout(groq.chat.completions.create({
                     messages: [{ role: 'user', content: customPrompt }],
-                    model: GROQ_MODEL,
+                    model: groqModel,
                     temperature: 0,
+                    max_tokens: maxTokens || undefined,
                     response_format: isJson ? { type: "json_object" } : undefined
-                }), 15000, 'Groq API');
+                }), 20000, 'Groq API');
                 return cleanTextResponse(completion.choices[0]?.message?.content || '');
-            }, `Groq/${GROQ_MODEL}`);
+            }, `Groq/${groqModel}`);
+        }
 
         case 'openai':
             if (!process.env.OPENAI_API_KEY) throw new Error('OPENAI_API_KEY not configured in env');
@@ -323,8 +329,14 @@ async function fastPrompt(customPrompt) {
 /**
  * public generalPrompt — Tier 3 (llama3.2 / outreach generation, reply drafting, personalization)
  * Routes to LLM_PROVIDER, falls back to Groq Cloud, then falls back to Local Ollama/Llama3.2.
+ * @param {string} customPrompt
+ * @param {Object} [options] - { model, maxTokens } — per-call overrides (e.g. a non-reasoning
+ *   Groq model + explicit token cap for a route where the default reasoning model's hidden
+ *   <think> tokens would otherwise blow the budget before any JSON is written). Ignored by
+ *   whichever provider doesn't support them (only the Groq branch reads them today).
  */
-async function generalPrompt(customPrompt, task = 'complex') {
+async function generalPrompt(customPrompt, options = {}) {
+    const { model, maxTokens } = options || {};
     const cached = await AICache.get(customPrompt);
     if (cached) return cached;
 
@@ -332,7 +344,7 @@ async function generalPrompt(customPrompt, task = 'complex') {
     const primaryProvider = process.env.LLM_PROVIDER || 'ollama';
 
     try {
-        const responseText = await callLLM(customPrompt, { tier: 'quality', isJson });
+        const responseText = await callLLM(customPrompt, { tier: 'quality', isJson, model, maxTokens });
         if (responseText) await AICache.set(customPrompt, responseText);
         return responseText;
     } catch (err) {
@@ -354,7 +366,7 @@ async function generalPrompt(customPrompt, task = 'complex') {
         // If primary was NOT Groq (e.g. Gemini/OpenAI), try Groq Cloud first, then Local Ollama
         console.warn(`[Quality Prompt] Falling back to Groq Cloud...`);
         try {
-            const responseText = await callLLM(customPrompt, { tier: 'quality', isJson, forceProvider: 'groq' });
+            const responseText = await callLLM(customPrompt, { tier: 'quality', isJson, forceProvider: 'groq', model, maxTokens });
             if (responseText) await AICache.set(customPrompt, responseText);
             return responseText;
         } catch (groqErr) {

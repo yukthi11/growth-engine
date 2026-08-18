@@ -1,7 +1,7 @@
 import React from 'react';
 import LeadRow from './LeadRow';
 
-const LeadTable = ({ leads, onUpdate, onViewMessages, onEdit, onDelete, onOpenOutreachStatus }) => {
+const LeadTable = ({ leads, onUpdate, onViewMessages, onEdit, onDelete, onOpenOutreachStatus, onGenerateProposal }) => {
     if (!leads || leads.length === 0) {
         return (
             <div className="bg-midnight-lighter px-8 py-20 text-center border border-white/5 rounded-3xl premium-shadow flex flex-col items-center">
@@ -46,6 +46,7 @@ const LeadTable = ({ leads, onUpdate, onViewMessages, onEdit, onDelete, onOpenOu
                                 onEdit={onEdit}
                                 onDelete={onDelete}
                                 onOpenOutreachStatus={onOpenOutreachStatus}
+                                onGenerateProposal={onGenerateProposal}
                             />
                         ))}
                     </tbody>

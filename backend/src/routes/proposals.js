@@ -2,6 +2,16 @@ const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
 const { generalPrompt } = require('../scrapers/llmExtractor');
+const { recommendServices, formatPricingSummary, formatTotals, computeLineItemTotals, applyMilestoneSplit, DEFAULT_MILESTONE_SPLIT } = require('../utils/serviceMatcher');
+
+// Scoped to this route only (doesn't touch GROQ_MODEL used elsewhere, e.g. outreach
+// drafting). The shared default (qwen/qwen3.6-27b) is a reasoning model whose hidden
+// <think> tokens reliably blow past Groq's token budget on this route's large JSON
+// schema before ever emitting the answer — openai/gpt-oss-20b answers this schema
+// directly, in ~2-3s instead of failing after ~90s of retries/fallback.
+const PROPOSAL_LLM_MODEL = process.env.PROPOSAL_LLM_MODEL || 'openai/gpt-oss-20b';
+const PROPOSAL_LLM_MAX_TOKENS = 4000;
+const proposalLLM = (prompt) => generalPrompt(prompt, { model: PROPOSAL_LLM_MODEL, maxTokens: PROPOSAL_LLM_MAX_TOKENS });
 
 /**
  * Helper to clean up JSON responses from LLM (in case of markdown blocks).
@@ -41,9 +51,19 @@ router.get('/autofill/:leadId', async (req, res) => {
         }
         const company = companyRes.rows[0];
 
-        // Construct analysis prompt
+        // Deterministic gap -> service catalog matching (no LLM, no invented prices).
+        // Base prices are whatever's currently in the `services` table, so admin
+        // edits via PATCH /services/:id are reflected immediately.
+        const servicesRes = await pool.query('SELECT * FROM services WHERE is_active = TRUE ORDER BY category, sort_order');
+        const recommended = recommendServices(lead, servicesRes.rows);
+        const pricing = formatPricingSummary(recommended);
+        const recommendedServiceNames = recommended.map((s) => s.name);
+
+        // Construct analysis prompt — narrative fields only. Service selection and
+        // pricing are decided above, deterministically, so the LLM can't drift
+        // from the catalog or invent numbers.
         const prompt = `
-You are a senior business solution consultant for ${company.name}. 
+You are a senior business solution consultant for ${company.name}.
 Analyze this prospective lead and our workspace company, then generate recommended project brief details to pre-populate a business proposal form.
 
 Prospective Lead:
@@ -58,10 +78,11 @@ Our Company Offerings & Growth Goals:
 - Overview: ${company.overview || ''}
 - Growth Directives: ${company.goal || ''}
 
+Services Already Selected For This Lead (matched deterministically from detected gaps — ground your narrative in these, do not suggest others): ${recommendedServiceNames.length > 0 ? recommendedServiceNames.join(', ') : 'None matched — write generically about growth/automation needs'}
+
 Based on this context, suggest the following details to pre-fill a business proposal.
-Focus on outcomes, business value, removing operational stress, and automation efficiency. 
+Focus on outcomes, business value, removing operational stress, and automation efficiency.
 DO NOT mention programming languages, APIs, or technical implementation details.
-Selected services MUST be drawn from our company's goals/offerings, targeting the lead's gaps (e.g. Booking Automation, WhatsApp Assistant, Lead Tracking, Reputation Management, Local SEO).
 
 You must return a valid JSON object ONLY. Do not write any markdown wrappers or introductory text. The output must parse as JSON matching this schema:
 {
@@ -71,18 +92,21 @@ You must return a valid JSON object ONLY. Do not write any markdown wrappers or 
   "problem": "Concise overview of the lead's specific operational problem, inefficiencies, and pain points based on their gaps.",
   "current_process": "Description of their current inefficient process (e.g. manual booking, no confirmation alerts, low visibility).",
   "desired_outcome": "Outcome-focused description of the future state (e.g. automated schedules, zero no-shows, live dashboard visibility).",
-  "selected_services": ["Array of 2-3 services selected from our offerings that solve this, e.g. 'WhatsApp Assistant', 'Smart Booking System'"],
   "timeline": "e.g. '3 Weeks' or '4 Weeks'",
-  "pricing": "e.g. '₹45,000' or '$1,500' (suggest a realistic value based on local context)",
   "milestones": "Milestone payments, e.g. '50% Upfront, 50% on complete delivery'"
 }
         `.trim();
 
         console.log(`[Proposal Writer] Autofilling details for Lead ID ${leadId} (${lead.business_name})...`);
-        const responseText = await generalPrompt(prompt);
+        const responseText = await proposalLLM(prompt);
         const parsedData = parseLLMJson(responseText);
 
-        res.json(parsedData);
+        res.json({
+            ...parsedData,
+            selected_services: recommendedServiceNames,
+            recommended_services: recommended,
+            pricing,
+        });
     } catch (err) {
         console.error('Error in proposal autofill:', err.message);
         res.status(500).json({ error: 'Failed to generate proposal autofill: ' + err.message });
@@ -106,12 +130,44 @@ router.post('/generate', async (req, res) => {
         notes,
         timeline,
         pricing,
-        milestones
+        milestones,
+        line_items,       // optional: [{ name, unit_price, monthly_price, quantity }] — enables deterministic pricing below
+        milestone_split    // optional: [{ label, percentage }] — defaults to 50/50 when line_items is used
     } = req.body;
 
     if (!business_name || !project_name) {
         return res.status(400).json({ error: 'Business Name and Project Name are required.' });
     }
+
+    // Deterministic pricing path: when the caller sends structured line items
+    // (the Proposal Writer's catalog picker), the total and milestone amounts
+    // are computed here — the LLM never touches numbers, only wording. Callers
+    // that still send free-text `pricing`/`milestones` (legacy) are unaffected.
+    const hasLineItems = Array.isArray(line_items) && line_items.length > 0;
+    let finalPricing = pricing;
+    let precomputedInvestment = null;
+
+    if (hasLineItems) {
+        const totals = computeLineItemTotals(line_items);
+        finalPricing = formatTotals(totals.oneTime, totals.monthly);
+        const splits = Array.isArray(milestone_split) && milestone_split.length > 0 ? milestone_split : DEFAULT_MILESTONE_SPLIT;
+        precomputedInvestment = applyMilestoneSplit(totals.oneTime, splits);
+    }
+
+    const investmentSchema = hasLineItems
+        ? `"investment": [
+    {
+      "milestone_name": "Milestone name for split #N (there are exactly ${precomputedInvestment.length} splits, in order), e.g. 'Project Initiation & Configuration' or 'Complete Delivery & Handoff'",
+      "project_scope": "What is covered in this milestone, drawn from the selected services"
+    }
+  ],`
+        : `"investment": [
+    {
+      "milestone_name": "Milestone name, e.g. 'Project Initiation & Configuration' or 'Complete Delivery & Handoff'",
+      "project_scope": "What is covered in this milestone",
+      "amount": "The amount or percentage, e.g. '50%' or pricing equivalent"
+    }
+  ],`;
 
     try {
         const prompt = `
@@ -145,7 +201,7 @@ Input Parameters:
 - Selected Services: ${Array.isArray(selected_services) ? selected_services.join(', ') : (selected_services || 'Automation Services')}
 - Custom Notes: ${notes || 'None'}
 - Timeline: ${timeline || '4 Weeks'}
-- Pricing: ${pricing || 'TBD'}
+- Pricing: ${finalPricing || 'TBD'}
 - Milestones: ${milestones || '50% upon commencement, 50% upon delivery'}
 
 Respond ONLY with a valid JSON object. Do not include markdown tags, greeting notes, or preambles. The JSON must match the following schema:
@@ -196,16 +252,10 @@ Respond ONLY with a valid JSON object. Do not include markdown tags, greeting no
       "description": "Brief description of delivery, launch, and onboarding."
     }
   ],
-  "investment": [
-    {
-      "milestone_name": "Milestone name, e.g. 'Project Initiation & Configuration' or 'Complete Delivery & Handoff'",
-      "project_scope": "What is covered in this milestone",
-      "amount": "The amount or percentage, e.g. '50%' or pricing equivalent"
-    }
-  ],
+  ${investmentSchema}
   "final_summary": {
-    "total_investment": "${pricing}",
-    "payment_structure": "${milestones}",
+    "total_investment": "${finalPricing}",
+    "payment_structure": "${milestones || (hasLineItems ? precomputedInvestment.map(s => `${s.percentage}% ${s.label}`).join(', ') : '')}",
     "support_included": "e.g. '30 Days Post-Launch Optimization Support'",
     "expected_delivery": "${timeline}"
   }
@@ -213,8 +263,20 @@ Respond ONLY with a valid JSON object. Do not include markdown tags, greeting no
         `.trim();
 
         console.log(`[Proposal Writer] Generating full proposal for ${business_name}...`);
-        const responseText = await generalPrompt(prompt);
+        const responseText = await proposalLLM(prompt);
         const parsedProposal = parseLLMJson(responseText);
+
+        // Merge in the deterministic amounts — the LLM only supplied names/scope text above.
+        if (hasLineItems && Array.isArray(parsedProposal.investment)) {
+            parsedProposal.investment = parsedProposal.investment.map((milestone, idx) => ({
+                ...milestone,
+                amount: precomputedInvestment[idx]?.amount ?? finalPricing,
+            }));
+            parsedProposal.final_summary = {
+                ...parsedProposal.final_summary,
+                total_investment: finalPricing,
+            };
+        }
 
         res.json(parsedProposal);
     } catch (err) {
