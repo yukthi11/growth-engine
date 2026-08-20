@@ -80,7 +80,7 @@ class GoogleMapsScraper extends BaseScraper {
                     if (!href || results.find(r => r.url === href)) return;
 
                     const nameEl = card.querySelector('.qBF1Pd, .NrDZNb, [class*="fontHeadline"]');
-                    
+
                     // NEW: Extract the metadata line (e.g., "Restaurant · Kammanahalli")
                     // This is the most reliable way to tell the neighborhood before clicking
                     const container = card.closest('.Nv2Yub, .m6QErb');
@@ -118,7 +118,7 @@ class GoogleMapsScraper extends BaseScraper {
                 if (!isDeepSingle && expectedLocation && subtitle) {
                     const normalizedSub = subtitle.toLowerCase();
                     const target = expectedLocation.toLowerCase().split(' ')[0]; // e.g. "kammanahalli"
-                    
+
                     // If Google shows a neighborhood in the subtitle and it's NOT ours, skip it instantly
                     if (target && !normalizedSub.includes(target) && normalizedSub.includes('·')) {
                         this.log(`[Sidebar Guard] Skipping ${businessName} - Subtitle says "${subtitle}"`);
@@ -213,13 +213,13 @@ class GoogleMapsScraper extends BaseScraper {
                 const filteredLeads = [];
                 for (const lead of leads) {
                     const isExact = isStrictMatch([lead.businessName, lead.location.address, lead.location.localArea, lead.location.subtitle], expectedLocation);
-                    
+
                     if (isProximity) {
                         filteredLeads.push(tagProximityLead(lead, expectedLocation, isExact));
                     } else {
                         const addressParts = (lead.location.address || '').split(',').map(p => p.trim()).filter(Boolean);
                         const isIncompleteAddress = addressParts.length < 3;
-                        
+
                         if (isExact) {
                             filteredLeads.push(tagProximityLead(lead, expectedLocation, true));
                         } else if (isIncompleteAddress) {

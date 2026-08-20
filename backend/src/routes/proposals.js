@@ -1,8 +1,54 @@
 const express = require('express');
 const router = express.Router();
 const pool = require('../config/db');
+const fs = require('fs');
+const path = require('path');
+const multer = require('multer');
+const puppeteer = require('puppeteer');
 const { generalPrompt } = require('../scrapers/llmExtractor');
 const { recommendServices, formatPricingSummary, formatTotals, computeLineItemTotals, applyMilestoneSplit, DEFAULT_MILESTONE_SPLIT } = require('../utils/serviceMatcher');
+const {
+    wrapFullDocument,
+    renderFixedBody,
+    renderFreeformBody,
+    buildHeaderTemplate,
+    buildFooterTemplate,
+} = require('../services/proposalPdfTemplate');
+
+const UPLOADS_DIR = path.join(__dirname, '../../uploads');
+const LOGO_BASENAME = 'proposal-logo';
+
+// Single global logo shared across every exported proposal — uploaded once,
+// overwritten on re-upload. No DB row needed since there's only ever one.
+const logoStorage = multer.diskStorage({
+    destination: (req, file, cb) => cb(null, UPLOADS_DIR),
+    filename: (req, file, cb) => cb(null, LOGO_BASENAME + path.extname(file.originalname).toLowerCase()),
+});
+const logoUpload = multer({
+    storage: logoStorage,
+    limits: { fileSize: 3 * 1024 * 1024 },
+    fileFilter: (req, file, cb) => {
+        const allowed = /jpeg|jpg|png|svg/;
+        const ok = allowed.test(path.extname(file.originalname).toLowerCase()) && allowed.test(file.mimetype);
+        if (ok) return cb(null, true);
+        cb(new Error('Only JPG, PNG, or SVG logos are allowed'));
+    },
+});
+
+function findExistingLogoFile() {
+    if (!fs.existsSync(UPLOADS_DIR)) return null;
+    const match = fs.readdirSync(UPLOADS_DIR).find((f) => f.startsWith(LOGO_BASENAME + '.'));
+    return match ? path.join(UPLOADS_DIR, match) : null;
+}
+
+function getLogoDataUri() {
+    const filePath = findExistingLogoFile();
+    if (!filePath) return null;
+    const ext = path.extname(filePath).slice(1).toLowerCase();
+    const mime = ext === 'svg' ? 'image/svg+xml' : `image/${ext === 'jpg' ? 'jpeg' : ext}`;
+    const base64 = fs.readFileSync(filePath).toString('base64');
+    return `data:${mime};base64,${base64}`;
+}
 
 // Scoped to this route only (doesn't touch GROQ_MODEL used elsewhere, e.g. outreach
 // drafting). The shared default (qwen/qwen3.6-27b) is a reasoning model whose hidden
@@ -282,6 +328,84 @@ Respond ONLY with a valid JSON object. Do not include markdown tags, greeting no
     } catch (err) {
         console.error('Error in proposal generation:', err.message);
         res.status(500).json({ error: 'Failed to generate proposal: ' + err.message });
+    }
+});
+
+/**
+ * 3. POST /proposals/logo
+ * Uploads (or replaces) the single global logo used in every proposal PDF's header.
+ */
+router.post('/logo', logoUpload.single('logo'), (req, res) => {
+    if (!req.file) return res.status(400).json({ error: 'No logo file uploaded' });
+    // Remove any stale logo with a different extension so only one ever exists.
+    fs.readdirSync(UPLOADS_DIR)
+        .filter((f) => f.startsWith(LOGO_BASENAME + '.') && f !== req.file.filename)
+        .forEach((f) => fs.unlinkSync(path.join(UPLOADS_DIR, f)));
+    res.json({ url: `/uploads/${req.file.filename}` });
+});
+
+/**
+ * 4. GET /proposals/logo
+ * Reports whether a global logo is currently configured.
+ */
+router.get('/logo', (req, res) => {
+    const filePath = findExistingLogoFile();
+    res.json({ url: filePath ? `/uploads/${path.basename(filePath)}` : null });
+});
+
+/**
+ * 5. POST /proposals/export-pdf
+ * Renders the proposal (fixed AI-structured JSON, or freeform HTML) into a
+ * premium branded PDF via headless Chrome and streams it back.
+ * Stateless — proposals aren't persisted, so the full content is sent each time,
+ * mirroring the existing /generate pattern.
+ */
+router.post('/export-pdf', async (req, res) => {
+    const { mode, proposal, freeform_html, business_name, project_name, company_name } = req.body;
+
+    if (mode === 'freeform' && !freeform_html) {
+        return res.status(400).json({ error: 'freeform_html is required for freeform mode' });
+    }
+    if (mode !== 'freeform' && !proposal) {
+        return res.status(400).json({ error: 'proposal is required for fixed mode' });
+    }
+
+    const meta = {
+        businessName: business_name || '',
+        projectName: project_name || '',
+    };
+    const companyName = company_name || 'Revive Technology';
+
+    const bodyHtml = mode === 'freeform'
+        ? renderFreeformBody(freeform_html, meta, project_name)
+        : renderFixedBody(proposal, meta);
+
+    const fullHtml = wrapFullDocument(bodyHtml);
+
+    let browser;
+    try {
+        browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
+        const page = await browser.newPage();
+        await page.setContent(fullHtml, { waitUntil: 'networkidle0' });
+
+        const pdfBuffer = await page.pdf({
+            format: 'A4',
+            printBackground: true,
+            displayHeaderFooter: true,
+            headerTemplate: buildHeaderTemplate({ logoDataUri: getLogoDataUri(), companyName }),
+            footerTemplate: buildFooterTemplate({ confidentialityNote: `Confidential — Prepared for ${meta.businessName || 'Client'}` }),
+            margin: { top: '70px', bottom: '60px', left: '40px', right: '40px' },
+        });
+
+        const safeName = (project_name || business_name || 'proposal').replace(/[^a-z0-9]+/gi, '-').toLowerCase();
+        res.setHeader('Content-Type', 'application/pdf');
+        res.setHeader('Content-Disposition', `attachment; filename="${safeName}.pdf"`);
+        res.send(pdfBuffer);
+    } catch (err) {
+        console.error('Error exporting proposal PDF:', err.message);
+        res.status(500).json({ error: 'Failed to export PDF: ' + err.message });
+    } finally {
+        if (browser) await browser.close();
     }
 });
 

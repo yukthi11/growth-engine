@@ -1,6 +1,6 @@
 import axios from 'axios';
 
-const API_BASE_URL = 'http://127.0.0.1:5000';
+export const API_BASE_URL = 'http://127.0.0.1:5000';
 
 const client = axios.create({
     baseURL: API_BASE_URL,
@@ -213,6 +213,27 @@ export const getProposalAutofill = async (leadId) => {
 
 export const getServices = async () => {
     const response = await client.get('/services');
+    return response.data;
+};
+
+export const getProposalLogo = async () => {
+    const response = await client.get('/proposals/logo');
+    return response.data;
+};
+
+export const uploadProposalLogo = async (file) => {
+    const formData = new FormData();
+    formData.append('logo', file);
+    const response = await client.post('/proposals/logo', formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+    });
+    return response.data;
+};
+
+export const exportProposalPdf = async (payload) => {
+    const response = await client.post('/proposals/export-pdf', payload, {
+        responseType: 'blob',
+    });
     return response.data;
 };
 

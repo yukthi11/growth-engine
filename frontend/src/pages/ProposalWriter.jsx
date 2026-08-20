@@ -1,12 +1,23 @@
-import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { getLeads, getProposalAutofill, generateProposal, getServices } from '../api/client';
+﻿import React, { useState, useEffect, useMemo, useRef } from 'react';
+import ReactQuill from 'react-quill-new';
+import 'react-quill-new/dist/quill.snow.css';
+import {
+    getLeads,
+    getProposalAutofill,
+    generateProposal,
+    getServices,
+    getProposalLogo,
+    uploadProposalLogo,
+    exportProposalPdf,
+    API_BASE_URL,
+} from '../api/client';
 
 const DEFAULT_MILESTONE_SPLIT = [
     { label: 'Upfront', percentage: 50 },
     { label: 'On Completion', percentage: 50 },
 ];
 
-const formatINR = (amount) => `₹${Math.round(amount).toLocaleString('en-IN')}`;
+const formatINR = (amount) => `â‚¹${Math.round(amount).toLocaleString('en-IN')}`;
 
 const formatTotals = (oneTime, monthly) => {
     if (oneTime === 0 && monthly === 0) return 'TBD';
@@ -51,7 +62,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
     const [timeline, setTimeline] = useState('');
     // lineItems: { [serviceId]: { service, quantity, unit_price, monthly_price } }
     // unit_price/monthly_price default to the catalog's base price but are freely
-    // editable per-proposal — the catalog price is only ever a starting point.
+    // editable per-proposal â€” the catalog price is only ever a starting point.
     const [lineItems, setLineItems] = useState({});
     const [milestoneSplit, setMilestoneSplit] = useState(DEFAULT_MILESTONE_SPLIT);
 
@@ -62,6 +73,13 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
     const [isGenerating, setIsGenerating] = useState(false);
     const [proposal, setProposal] = useState(null);
     const [copied, setCopied] = useState(false);
+
+    // Fixed-format vs freeform authoring mode â€” see mode toggle below.
+    const [mode, setMode] = useState('fixed'); // 'fixed' | 'freeform'
+    const [logoUrl, setLogoUrl] = useState(null);
+    const [isUploadingLogo, setIsUploadingLogo] = useState(false);
+    const [freeformHtml, setFreeformHtml] = useState('');
+    const [isDownloading, setIsDownloading] = useState(false);
 
     const catalogByCategory = useMemo(() => {
         return catalog.reduce((acc, service) => {
@@ -88,7 +106,38 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
     // Load leads + service catalog for the active workspace company
     useEffect(() => {
         fetchCatalog();
+        getProposalLogo().then((res) => setLogoUrl(res.url)).catch(() => {});
     }, []);
+
+    const handleLogoUpload = async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        setIsUploadingLogo(true);
+        try {
+            const res = await uploadProposalLogo(file);
+            setLogoUrl(res.url);
+        } catch (err) {
+            console.error('Failed to upload logo:', err);
+            alert('Failed to upload logo: ' + (err.response?.data?.error || err.message));
+        } finally {
+            setIsUploadingLogo(false);
+            e.target.value = '';
+        }
+    };
+
+    // Deep-updates a field on the generated proposal by key path, e.g.
+    // ['how_it_helps', 1, 'items', 0, 'benefit'] â€” lets the sandbox stay
+    // fully editable after generation without re-calling the LLM.
+    const updateProposalField = (path, value) => {
+        setProposal((prev) => {
+            if (!prev) return prev;
+            const next = structuredClone(prev);
+            let obj = next;
+            for (let i = 0; i < path.length - 1; i++) obj = obj[path[i]];
+            obj[path[path.length - 1]] = value;
+            return next;
+        });
+    };
 
     useEffect(() => {
         if (companyId) {
@@ -100,7 +149,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
     }, [companyId]);
 
     // Auto-select the lead handed off from the leads table's "Generate Proposal"
-    // quick action, once — guarded by ref so it doesn't refire on every leads refresh.
+    // quick action, once â€” guarded by ref so it doesn't refire on every leads refresh.
     useEffect(() => {
         if (initialLeadId && leads.length > 0 && appliedInitialLeadRef.current !== initialLeadId) {
             appliedInitialLeadRef.current = initialLeadId;
@@ -161,7 +210,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
 
     const selectedLead = leads.find((lead) => String(lead.id) === String(selectedLeadId));
 
-    // Triggers AI Autofill for a given lead — shared by the search dropdown and
+    // Triggers AI Autofill for a given lead â€” shared by the search dropdown and
     // the "Generate Proposal" quick-action from the leads table (initialLeadId).
     const selectLead = async (leadId) => {
         setSelectedLeadId(leadId);
@@ -186,7 +235,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
 
             // Pre-check the services matched deterministically from this lead's
             // detected gaps (see backend/src/utils/serviceMatcher.js), seeded with
-            // catalog base prices — still fully editable below before generating.
+            // catalog base prices â€” still fully editable below before generating.
             const seeded = {};
             (autofill.recommended_services || []).forEach((service) => {
                 seeded[service.id] = {
@@ -266,7 +315,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                 selected_services: items.map((item) => item.service.name),
                 notes: customNotes,
                 timeline,
-                // Structured pricing — total and milestone amounts are computed
+                // Structured pricing â€” total and milestone amounts are computed
                 // server-side from these, never invented by the LLM.
                 line_items: items.map((item) => ({
                     name: item.service.name,
@@ -286,9 +335,29 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
         }
     };
 
-    // Print to PDF
-    const handlePrint = () => {
-        window.print();
+    // Export the current (possibly edited) proposal as a real, premium PDF â€”
+    // rendered server-side via Puppeteer so it's identical regardless of browser.
+    const handleDownloadPdf = async () => {
+        setIsDownloading(true);
+        try {
+            const payload = mode === 'freeform'
+                ? { mode: 'freeform', freeform_html: freeformHtml, business_name: businessName, project_name: projectName, company_name: 'Revive Technology' }
+                : { mode: 'fixed', proposal, business_name: businessName, project_name: projectName, company_name: 'Revive Technology' };
+            const blob = await exportProposalPdf(payload);
+            const url = window.URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `${(projectName || businessName || 'proposal').replace(/[^a-z0-9]+/gi, '-').toLowerCase()}.pdf`;
+            document.body.appendChild(a);
+            a.click();
+            a.remove();
+            window.URL.revokeObjectURL(url);
+        } catch (err) {
+            console.error('Failed to export PDF:', err);
+            alert('Failed to export PDF: ' + (err.response?.data?.error || err.message));
+        } finally {
+            setIsDownloading(false);
+        }
     };
 
     // Copy Proposal Markdown
@@ -355,62 +424,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
 
     return (
         <div className="space-y-8 relative">
-            {/* Custom print stylesheet overrides */}
-            <style dangerouslySetInnerHTML={{__html: `
-                @media print {
-                    body {
-                        background: white !important;
-                        color: black !important;
-                    }
-                    /* Hide everything except the proposal container */
-                    #root, header, aside, main > :not(.proposal-print-container), .no-print {
-                        display: none !important;
-                    }
-                    /* Show and format print container */
-                    .proposal-print-container {
-                        display: block !important;
-                        position: absolute;
-                        left: 0;
-                        top: 0;
-                        width: 100%;
-                        background: white !important;
-                        color: #0d0d0d !important;
-                        padding: 20px !important;
-                        margin: 0 !important;
-                        box-shadow: none !important;
-                        border: none !important;
-                    }
-                    .print-gradient-hero {
-                        background: #f4f4f7 !important;
-                        border: 2px solid #000 !important;
-                        color: black !important;
-                    }
-                    .print-card {
-                        background: #fafafa !important;
-                        border: 1px solid #ddd !important;
-                        color: black !important;
-                        box-shadow: none !important;
-                    }
-                    .print-table {
-                        border: 1px solid #ddd !important;
-                    }
-                    .print-table th, .print-table td {
-                        border-bottom: 1px solid #ddd !important;
-                        color: black !important;
-                    }
-                    .print-metric {
-                        font-size: 32px !important;
-                        font-weight: 800 !important;
-                        color: #7c3aed !important;
-                    }
-                    .page-break {
-                        page-break-before: always;
-                        padding-top: 20px;
-                    }
-                }
-            `}} />
-
-            <div className="flex items-center justify-between no-print">
+            <div className="flex items-center justify-between no-print flex-wrap gap-4">
                 <div className="space-y-1">
                     <h2 className="text-3xl font-black text-white tracking-tight uppercase italic leading-none flex items-center gap-3">
                         <CustomIcons.Document /> Proposal Writer
@@ -419,24 +433,58 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                         AI-Powered Custom Business Consultant Solutions
                     </p>
                 </div>
+
+                <div className="flex items-center gap-4">
+                    {/* Global logo used in every proposal PDF's header */}
+                    <label className="flex items-center gap-2 px-3 py-2 bg-white/[0.02] border border-white/5 rounded-2xl cursor-pointer hover:border-violet-500/40 transition-all">
+                        {logoUrl ? (
+                            <img src={`${API_BASE_URL}${logoUrl}`} alt="Company logo" className="h-6 w-auto max-w-[80px] object-contain" />
+                        ) : (
+                            <span className="text-[9px] font-black uppercase text-slate-500">No Logo</span>
+                        )}
+                        <span className="text-[9px] font-black uppercase text-violet-400">
+                            {isUploadingLogo ? 'Uploadingâ€¦' : (logoUrl ? 'Change' : 'Upload Logo')}
+                        </span>
+                        <input type="file" accept="image/png,image/jpeg,image/svg+xml" className="hidden" onChange={handleLogoUpload} disabled={isUploadingLogo} />
+                    </label>
+
+                    {/* Mode toggle: fixed AI-structured format vs. freeform from-scratch canvas */}
+                    <div className="flex items-center bg-white/[0.02] border border-white/5 rounded-2xl p-1">
+                        <button
+                            type="button"
+                            onClick={() => setMode('fixed')}
+                            className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${mode === 'fixed' ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-white'}`}
+                        >
+                            Fixed Format
+                        </button>
+                        <button
+                            type="button"
+                            onClick={() => setMode('freeform')}
+                            className={`px-4 py-2 rounded-xl text-[9px] font-black uppercase tracking-widest transition-all ${mode === 'freeform' ? 'bg-violet-600 text-white' : 'text-slate-500 hover:text-white'}`}
+                        >
+                            Freeform
+                        </button>
+                    </div>
+                </div>
             </div>
 
+            {mode === 'fixed' && (
             <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 no-print">
                 {/* Left Form Panel */}
                 <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 space-y-6 premium-shadow">
                     <h3 className="text-lg font-black text-white tracking-tight uppercase flex items-center gap-2">
-                        📋 Define Proposal Scope
+                        ðŸ“‹ Define Proposal Scope
                     </h3>
                     
                     <div className="space-y-4">
-                        {/* Lead Selector — searchable, sorted hot -> warm -> cold */}
+                        {/* Lead Selector â€” searchable, sorted hot -> warm -> cold */}
                         <div className="flex flex-col gap-2 relative">
                             <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
                                 Load from Database (Autofill)
                             </label>
                             <input
                                 type="text"
-                                value={isLeadDropdownOpen ? leadQuery : (selectedLead ? `🏢 ${selectedLead.business_name} (${selectedLead.location_normalized || 'No Location'})` : '')}
+                                value={isLeadDropdownOpen ? leadQuery : (selectedLead ? `ðŸ¢ ${selectedLead.business_name} (${selectedLead.location_normalized || 'No Location'})` : '')}
                                 onChange={(e) => setLeadQuery(e.target.value)}
                                 onFocus={() => { setIsLeadDropdownOpen(true); setLeadQuery(''); }}
                                 onBlur={() => setTimeout(() => setIsLeadDropdownOpen(false), 150)}
@@ -460,7 +508,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                             onMouseDown={() => selectLead(lead.id)}
                                             className="px-4 py-2.5 cursor-pointer flex items-center justify-between gap-2 hover:bg-violet-600/10 transition-colors"
                                         >
-                                            <span className="text-xs font-bold text-white truncate">🏢 {lead.business_name} <span className="text-slate-500">({lead.location_normalized || 'No Location'})</span></span>
+                                            <span className="text-xs font-bold text-white truncate">ðŸ¢ {lead.business_name} <span className="text-slate-500">({lead.location_normalized || 'No Location'})</span></span>
                                             {TIER_BADGE[lead.tier] && (
                                                 <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${TIER_BADGE[lead.tier]}`}>
                                                     {lead.tier}
@@ -596,7 +644,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                                                                     value={item.unit_price}
                                                                                     onChange={(e) => handleLineItemFieldChange(service.id, 'unit_price', e.target.value)}
                                                                                     className="w-28 bg-white/5 border border-white/5 rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-violet-500"
-                                                                                    placeholder="One-time ₹"
+                                                                                    placeholder="One-time â‚¹"
                                                                                 />
                                                                             )}
                                                                             {(service.price_type === 'monthly' || service.price_type === 'one_time_plus_monthly') && (
@@ -605,7 +653,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                                                                     value={item.monthly_price}
                                                                                     onChange={(e) => handleLineItemFieldChange(service.id, 'monthly_price', e.target.value)}
                                                                                     className="w-28 bg-white/5 border border-white/5 rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-violet-500"
-                                                                                    placeholder="Monthly ₹"
+                                                                                    placeholder="Monthly â‚¹"
                                                                                 />
                                                                             )}
                                                                         </>
@@ -619,7 +667,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                                                         title="Quantity"
                                                                     />
                                                                     {service.price_type === 'custom_quote' && (
-                                                                        <span className="text-[10px] font-bold text-slate-600 uppercase">Custom quote — priced outside this proposal</span>
+                                                                        <span className="text-[10px] font-bold text-slate-600 uppercase">Custom quote â€” priced outside this proposal</span>
                                                                     )}
                                                                 </div>
                                                             )}
@@ -647,7 +695,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                 />
                             </div>
 
-                            {/* Milestone Split Builder — percentages of the computed total above, not free text */}
+                            {/* Milestone Split Builder â€” percentages of the computed total above, not free text */}
                             <div className="flex flex-col gap-2">
                                 <div className="flex items-center justify-between">
                                     <label className="text-[9px] font-black uppercase text-slate-500">Payment Milestones</label>
@@ -673,7 +721,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                             />
                                             <span className="text-xs font-bold text-slate-500">%</span>
                                             {milestoneSplit.length > 1 && (
-                                                <button type="button" onClick={() => removeMilestone(idx)} className="text-slate-600 hover:text-red-400 text-xs font-black px-1">✕</button>
+                                                <button type="button" onClick={() => removeMilestone(idx)} className="text-slate-600 hover:text-red-400 text-xs font-black px-1">âœ•</button>
                                             )}
                                         </div>
                                     ))}
@@ -736,11 +784,16 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                         {copied ? 'Copied!' : 'Copy Markdown'}
                                     </button>
                                     <button
-                                        onClick={handlePrint}
-                                        className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-xl transition-all text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-violet-600/15"
+                                        onClick={handleDownloadPdf}
+                                        disabled={isDownloading}
+                                        className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-xl transition-all text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-violet-600/15 disabled:opacity-50"
                                     >
-                                        <CustomIcons.Download />
-                                        Print / Save PDF
+                                        {isDownloading ? (
+                                            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                        ) : (
+                                            <CustomIcons.Download />
+                                        )}
+                                        {isDownloading ? 'Rendering PDFâ€¦' : 'Download PDF'}
                                     </button>
                                 </div>
                             </div>
@@ -756,15 +809,22 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                             <div className="w-8 h-8 rounded-lg border border-white/10 flex items-center justify-center font-black text-sm text-white">R</div>
                                         </div>
                                         <div className="z-10 space-y-4 my-8">
-                                            <p className="text-[10px] font-black text-violet-300/60 uppercase tracking-widest">
-                                                {proposal.cover_page?.category_name || 'Business Automation Systems'}
-                                            </p>
-                                            <h1 className="text-3xl font-black text-white italic tracking-tight uppercase leading-tight">
-                                                {proposal.cover_page?.project_name || projectName}
-                                            </h1>
-                                            <p className="text-sm font-bold text-violet-300 italic">
-                                                "{proposal.cover_page?.headline}"
-                                            </p>
+                                            <input
+                                                value={proposal.cover_page?.category_name || ''}
+                                                onChange={(e) => updateProposalField(['cover_page', 'category_name'], e.target.value)}
+                                                placeholder="Business Automation Systems"
+                                                className="w-full bg-transparent text-[10px] font-black text-violet-300/60 uppercase tracking-widest focus:outline-none focus:text-violet-300 placeholder:text-violet-300/40"
+                                            />
+                                            <input
+                                                value={proposal.cover_page?.project_name || projectName || ''}
+                                                onChange={(e) => updateProposalField(['cover_page', 'project_name'], e.target.value)}
+                                                className="w-full bg-transparent text-3xl font-black text-white italic tracking-tight uppercase leading-tight focus:outline-none"
+                                            />
+                                            <input
+                                                value={proposal.cover_page?.headline || ''}
+                                                onChange={(e) => updateProposalField(['cover_page', 'headline'], e.target.value)}
+                                                className="w-full bg-transparent text-sm font-bold text-violet-300 italic focus:outline-none"
+                                            />
                                         </div>
                                         <div className="z-10 border-t border-white/5 pt-4 flex items-center justify-between text-[10px] font-black text-slate-500 uppercase tracking-wider">
                                             <span>Prepared For: {businessName}</span>
@@ -778,20 +838,27 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                             <span className="text-[9px] font-black text-violet-400 uppercase tracking-widest uppercase">01 / Challenge</span>
                                             <h3 className="text-xl font-black text-white uppercase tracking-tight italic">Problem Overview</h3>
                                         </div>
-                                        <p className="text-sm font-medium leading-relaxed text-slate-400">
-                                            {proposal.problem_overview?.description}
-                                        </p>
+                                        <textarea
+                                            value={proposal.problem_overview?.description || ''}
+                                            onChange={(e) => updateProposalField(['problem_overview', 'description'], e.target.value)}
+                                            rows={4}
+                                            className="w-full bg-transparent text-sm font-medium leading-relaxed text-slate-400 focus:outline-none resize-none"
+                                        />
 
                                         {/* Metric Cards */}
                                         <div className="grid grid-cols-3 gap-4 pt-4">
                                             {proposal.key_benefits?.map((metric, idx) => (
                                                 <div key={idx} className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl text-center space-y-1">
-                                                    <div className="text-xl font-black text-violet-400 tracking-tight leading-none">
-                                                        {metric.value}
-                                                    </div>
-                                                    <div className="text-[8px] font-black uppercase text-slate-500 tracking-wider">
-                                                        {metric.label}
-                                                    </div>
+                                                    <input
+                                                        value={metric.value || ''}
+                                                        onChange={(e) => updateProposalField(['key_benefits', idx, 'value'], e.target.value)}
+                                                        className="w-full bg-transparent text-xl font-black text-violet-400 tracking-tight leading-none text-center focus:outline-none"
+                                                    />
+                                                    <input
+                                                        value={metric.label || ''}
+                                                        onChange={(e) => updateProposalField(['key_benefits', idx, 'label'], e.target.value)}
+                                                        className="w-full bg-transparent text-[8px] font-black uppercase text-slate-500 tracking-wider text-center focus:outline-none"
+                                                    />
                                                 </div>
                                             ))}
                                         </div>
@@ -808,14 +875,27 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                             {proposal.how_it_helps?.map((section, idx) => (
                                                 <div key={idx} className="bg-white/[0.01] border border-white/5 p-6 rounded-2xl space-y-4">
                                                     <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
-                                                        <span className="w-1.5 h-1.5 rounded-full bg-violet-500"></span>
-                                                        {section.section_name}
+                                                        <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0"></span>
+                                                        <input
+                                                            value={section.section_name || ''}
+                                                            onChange={(e) => updateProposalField(['how_it_helps', idx, 'section_name'], e.target.value)}
+                                                            className="w-full bg-transparent focus:outline-none"
+                                                        />
                                                     </h4>
                                                     <div className="space-y-3 pl-4 border-l border-white/5">
                                                         {section.items?.map((item, itemIdx) => (
                                                             <div key={itemIdx} className="space-y-1 text-xs">
-                                                                <span className="font-black text-slate-300 block">{item.feature}:</span>
-                                                                <span className="font-medium text-slate-400 leading-relaxed block">{item.benefit}</span>
+                                                                <input
+                                                                    value={item.feature || ''}
+                                                                    onChange={(e) => updateProposalField(['how_it_helps', idx, 'items', itemIdx, 'feature'], e.target.value)}
+                                                                    className="w-full bg-transparent font-black text-slate-300 focus:outline-none"
+                                                                />
+                                                                <textarea
+                                                                    value={item.benefit || ''}
+                                                                    onChange={(e) => updateProposalField(['how_it_helps', idx, 'items', itemIdx, 'benefit'], e.target.value)}
+                                                                    rows={2}
+                                                                    className="w-full bg-transparent font-medium text-slate-400 leading-relaxed resize-none focus:outline-none"
+                                                                />
                                                             </div>
                                                         ))}
                                                     </div>
@@ -833,8 +913,12 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                             <ul className="space-y-2 text-xs font-bold text-slate-400">
                                                 {proposal.deliverables?.map((deliv, idx) => (
                                                     <li key={idx} className="flex items-start gap-2">
-                                                        <span className="text-violet-400 mt-0.5">•</span>
-                                                        <span>{deliv}</span>
+                                                        <span className="text-violet-400 mt-0.5">â€¢</span>
+                                                        <input
+                                                            value={deliv || ''}
+                                                            onChange={(e) => updateProposalField(['deliverables', idx], e.target.value)}
+                                                            className="w-full bg-transparent focus:outline-none"
+                                                        />
                                                     </li>
                                                 ))}
                                             </ul>
@@ -848,8 +932,17 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                                 {proposal.timeline?.map((step, idx) => (
                                                     <div key={idx} className="space-y-1 relative text-xs">
                                                         <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full border border-violet-500 bg-midnight"></div>
-                                                        <span className="font-black text-white block">{step.phase}</span>
-                                                        <span className="font-medium text-slate-500 block leading-normal">{step.description}</span>
+                                                        <input
+                                                            value={step.phase || ''}
+                                                            onChange={(e) => updateProposalField(['timeline', idx, 'phase'], e.target.value)}
+                                                            className="w-full bg-transparent font-black text-white focus:outline-none"
+                                                        />
+                                                        <textarea
+                                                            value={step.description || ''}
+                                                            onChange={(e) => updateProposalField(['timeline', idx, 'description'], e.target.value)}
+                                                            rows={2}
+                                                            className="w-full bg-transparent font-medium text-slate-500 leading-normal resize-none focus:outline-none"
+                                                        />
                                                     </div>
                                                 ))}
                                             </div>
@@ -874,9 +967,27 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                                 <tbody className="divide-y divide-white/5">
                                                     {proposal.investment?.map((item, idx) => (
                                                         <tr key={idx} className="hover:bg-white/[0.01]">
-                                                            <td className="p-4 font-black text-white">{item.milestone_name}</td>
-                                                            <td className="p-4 font-medium text-slate-400">{item.project_scope}</td>
-                                                            <td className="p-4 font-black text-violet-400 text-right">{item.amount}</td>
+                                                            <td className="p-4 font-black text-white">
+                                                                <input
+                                                                    value={item.milestone_name || ''}
+                                                                    onChange={(e) => updateProposalField(['investment', idx, 'milestone_name'], e.target.value)}
+                                                                    className="w-full bg-transparent font-black text-white focus:outline-none"
+                                                                />
+                                                            </td>
+                                                            <td className="p-4 font-medium text-slate-400">
+                                                                <input
+                                                                    value={item.project_scope || ''}
+                                                                    onChange={(e) => updateProposalField(['investment', idx, 'project_scope'], e.target.value)}
+                                                                    className="w-full bg-transparent font-medium text-slate-400 focus:outline-none"
+                                                                />
+                                                            </td>
+                                                            <td className="p-4 font-black text-violet-400 text-right">
+                                                                <input
+                                                                    value={item.amount || ''}
+                                                                    onChange={(e) => updateProposalField(['investment', idx, 'amount'], e.target.value)}
+                                                                    className="w-full bg-transparent font-black text-violet-400 text-right focus:outline-none"
+                                                                />
+                                                            </td>
                                                         </tr>
                                                     ))}
                                                 </tbody>
@@ -885,20 +996,36 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
 
                                         <div className="bg-white/[0.01] border border-white/5 rounded-2xl p-6 space-y-3 text-xs font-bold text-slate-400">
                                             <div className="flex items-center justify-between text-white border-b border-white/5 pb-2">
-                                                <span className="font-black uppercase tracking-wider">Total Investment</span>
-                                                <span className="text-lg font-black text-violet-400 leading-none">{proposal.final_summary?.total_investment}</span>
+                                                <span className="font-black uppercase tracking-wider shrink-0">Total Investment</span>
+                                                <input
+                                                    value={proposal.final_summary?.total_investment || ''}
+                                                    onChange={(e) => updateProposalField(['final_summary', 'total_investment'], e.target.value)}
+                                                    className="w-1/2 bg-transparent text-lg font-black text-violet-400 leading-none text-right focus:outline-none"
+                                                />
                                             </div>
-                                            <div className="flex justify-between">
-                                                <span>Payment Structure</span>
-                                                <span className="text-slate-300 text-right font-black">{proposal.final_summary?.payment_structure}</span>
+                                            <div className="flex justify-between items-center">
+                                                <span className="shrink-0">Payment Structure</span>
+                                                <input
+                                                    value={proposal.final_summary?.payment_structure || ''}
+                                                    onChange={(e) => updateProposalField(['final_summary', 'payment_structure'], e.target.value)}
+                                                    className="w-1/2 bg-transparent text-slate-300 text-right font-black focus:outline-none"
+                                                />
                                             </div>
-                                            <div className="flex justify-between">
-                                                <span>Support Included</span>
-                                                <span className="text-slate-300 text-right font-black">{proposal.final_summary?.support_included}</span>
+                                            <div className="flex justify-between items-center">
+                                                <span className="shrink-0">Support Included</span>
+                                                <input
+                                                    value={proposal.final_summary?.support_included || ''}
+                                                    onChange={(e) => updateProposalField(['final_summary', 'support_included'], e.target.value)}
+                                                    className="w-1/2 bg-transparent text-slate-300 text-right font-black focus:outline-none"
+                                                />
                                             </div>
-                                            <div className="flex justify-between">
-                                                <span>Expected Delivery</span>
-                                                <span className="text-slate-300 text-right font-black">{proposal.final_summary?.expected_delivery}</span>
+                                            <div className="flex justify-between items-center">
+                                                <span className="shrink-0">Expected Delivery</span>
+                                                <input
+                                                    value={proposal.final_summary?.expected_delivery || ''}
+                                                    onChange={(e) => updateProposalField(['final_summary', 'expected_delivery'], e.target.value)}
+                                                    className="w-1/2 bg-transparent text-slate-300 text-right font-black focus:outline-none"
+                                                />
                                             </div>
                                         </div>
                                     </div>
@@ -908,7 +1035,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                     ) : (
                         <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-[40px] flex flex-col items-center justify-center p-10 text-center premium-shadow">
                             <div className="w-20 h-20 rounded-[28px] bg-white/5 flex items-center justify-center text-3xl mb-6 shadow-inner">
-                                📃
+                                ðŸ“ƒ
                             </div>
                             <h4 className="text-lg font-black text-slate-300 uppercase tracking-tight italic">Live Proposal Sandbox</h4>
                             <p className="text-xs font-medium text-slate-600 max-w-sm mt-2 leading-relaxed">
@@ -918,166 +1045,72 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                     )}
                 </div>
             </div>
+            )}
 
-            {/* Hidden Printable Document Container for Window.print() */}
-            {proposal && (
-                <div className="hidden proposal-print-container proposal-document p-10 text-black bg-white space-y-10 font-sans">
-                    {/* Page 1: Cover Page */}
-                    <div className="print-gradient-hero p-16 border-4 border-black min-h-[900px] flex flex-col justify-between" style={{pageBreakAfter: 'always'}}>
-                        <div className="flex justify-between items-center">
-                            <span className="text-lg font-bold tracking-[0.2em] uppercase text-violet-800">REVIVE TECHNOLOGY</span>
-                            <span className="text-sm font-bold border-2 border-black px-2 py-1">PROPOSAL</span>
-                        </div>
-                        <div className="space-y-6">
-                            <p className="text-xs font-bold uppercase tracking-widest text-gray-500">
-                                {proposal.cover_page?.category_name}
-                            </p>
-                            <h1 className="text-5xl font-black tracking-tight uppercase leading-none" style={{color: 'black'}}>
-                                {proposal.cover_page?.project_name}
-                            </h1>
-                            <p className="text-xl font-bold italic text-violet-700">
-                                "{proposal.cover_page?.headline}"
-                            </p>
-                        </div>
-                        <div className="border-t-2 border-black pt-6 flex justify-between text-xs font-bold uppercase tracking-wider text-gray-600">
-                            <span>Client: {businessName}</span>
-                            <span>Prepared: {new Date().toLocaleDateString(undefined, {year: 'numeric', month: 'long', day: 'numeric'})}</span>
-                        </div>
+            {mode === 'freeform' && (
+            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 no-print">
+                {/* Left: fixed necessities only */}
+                <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 space-y-6 premium-shadow">
+                    <h3 className="text-lg font-black text-white tracking-tight uppercase flex items-center gap-2">
+                        ðŸ“‹ Fixed Necessities
+                    </h3>
+                    <p className="text-xs font-medium text-slate-500 leading-relaxed">
+                        These stay fixed in the exported PDF's cover and header/footer. Everything else below is written from scratch.
+                    </p>
+                    <div className="flex flex-col gap-1.5">
+                        <label className="text-[9px] font-black uppercase text-slate-500">Business Name (Prepared For)</label>
+                        <input
+                            type="text"
+                            placeholder="e.g. Manning Gym"
+                            value={businessName}
+                            onChange={(e) => setBusinessName(e.target.value)}
+                            className="bg-white/5 border border-white/5 rounded-2xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-violet-500 transition-all font-sans"
+                        />
                     </div>
-
-                    {/* Page 2: Problem Overview */}
-                    <div className="space-y-6 min-h-[800px]" style={{pageBreakAfter: 'always'}}>
-                        <div className="border-b border-black pb-2">
-                            <span className="text-[10px] font-bold text-violet-800 uppercase tracking-wider">SECTION 01</span>
-                            <h2 className="text-2xl font-black uppercase tracking-tight">Challenge & Problem Overview</h2>
-                        </div>
-                        <p className="text-base leading-relaxed text-gray-800 font-medium">
-                            {proposal.problem_overview?.description}
-                        </p>
-
-                        <div className="grid grid-cols-3 gap-6 pt-10">
-                            {proposal.key_benefits?.map((metric, idx) => (
-                                <div key={idx} className="print-card p-6 border border-gray-300 bg-gray-50 text-center space-y-1">
-                                    <div className="print-metric text-4xl font-extrabold text-violet-700">
-                                        {metric.value}
-                                    </div>
-                                    <div className="text-[10px] font-bold uppercase tracking-wider text-gray-500">
-                                        {metric.label}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                    <div className="flex flex-col gap-1.5">
+                        <label className="text-[9px] font-black uppercase text-slate-500">Project / Proposal Title</label>
+                        <input
+                            type="text"
+                            placeholder="e.g. Manning Gym Booking Automation"
+                            value={projectName}
+                            onChange={(e) => setProjectName(e.target.value)}
+                            className="bg-white/5 border border-white/5 rounded-2xl px-4 py-3 text-sm font-bold text-white focus:outline-none focus:border-violet-500 transition-all font-sans"
+                        />
                     </div>
+                    <button
+                        type="button"
+                        onClick={handleDownloadPdf}
+                        disabled={isDownloading || !freeformHtml}
+                        className="w-full py-4 bg-violet-600 hover:bg-violet-500 text-white rounded-2xl font-black text-[10px] uppercase tracking-widest transition-all shadow-lg shadow-violet-600/20 active:scale-95 disabled:opacity-50 disabled:pointer-events-none flex items-center justify-center gap-2"
+                    >
+                        {isDownloading ? (
+                            <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                        ) : (
+                            <CustomIcons.Download />
+                        )}
+                        {isDownloading ? 'Rendering PDFâ€¦' : 'Download PDF'}
+                    </button>
+                </div>
 
-                    {/* Page 3: Solution details */}
-                    <div className="space-y-8 min-h-[800px]" style={{pageBreakAfter: 'always'}}>
-                        <div className="border-b border-black pb-2">
-                            <span className="text-[10px] font-bold text-violet-800 uppercase tracking-wider">SECTION 02</span>
-                            <h2 className="text-2xl font-black uppercase tracking-tight">Proposed Solution Architecture</h2>
-                        </div>
-
-                        <div className="space-y-6">
-                            {proposal.how_it_helps?.map((section, idx) => (
-                                <div key={idx} className="print-card p-6 border border-gray-300 bg-gray-50 rounded-lg space-y-4">
-                                    <h3 className="text-sm font-bold uppercase tracking-wider border-b border-gray-300 pb-2 text-violet-800">
-                                        {section.section_name}
-                                    </h3>
-                                    <div className="space-y-4 pl-4">
-                                        {section.items?.map((item, itemIdx) => (
-                                            <div key={itemIdx} className="space-y-1 text-sm">
-                                                <strong className="text-gray-900 block">{item.feature}:</strong>
-                                                <span className="text-gray-700 block leading-relaxed">{item.benefit}</span>
-                                            </div>
-                                        ))}
-                                    </div>
-                                </div>
-                            ))}
-                        </div>
+                {/* Right: freeform canvas, sits inside the same fixed header/footer shell in the exported PDF */}
+                <div className="flex flex-col h-[calc(100vh-140px)] overflow-hidden bg-white/[0.02] border border-white/5 rounded-[40px] premium-shadow">
+                    <div className="p-6 border-b border-white/5 bg-midnight-lighter">
+                        <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                            FREEFORM CANVAS â€” LIVE
+                        </span>
                     </div>
-
-                    {/* Page 4: Deliverables & Timeline */}
-                    <div className="space-y-8 min-h-[800px]" style={{pageBreakAfter: 'always'}}>
-                        <div className="border-b border-black pb-2">
-                            <span className="text-[10px] font-bold text-violet-800 uppercase tracking-wider">SECTION 03</span>
-                            <h2 className="text-2xl font-black uppercase tracking-tight">Scope & Delivery Blueprint</h2>
-                        </div>
-
-                        <div className="grid grid-cols-2 gap-10">
-                            <div className="space-y-4">
-                                <h3 className="text-sm font-bold uppercase tracking-widest text-violet-800">Project Deliverables</h3>
-                                <ul className="space-y-3 text-sm text-gray-700">
-                                    {proposal.deliverables?.map((deliv, idx) => (
-                                        <li key={idx} className="flex items-start gap-2">
-                                            <span className="text-violet-700 font-bold">•</span>
-                                            <span>{deliv}</span>
-                                        </li>
-                                    ))}
-                                </ul>
-                            </div>
-
-                            <div className="space-y-4">
-                                <h3 className="text-sm font-bold uppercase tracking-widest text-violet-800">Expected Timeline</h3>
-                                <div className="space-y-6 relative border-l-2 border-gray-300 pl-4">
-                                    {proposal.timeline?.map((step, idx) => (
-                                        <div key={idx} className="space-y-1 relative text-sm">
-                                            <div className="absolute -left-[22px] top-1.5 w-2.5 h-2.5 rounded-full border border-gray-400 bg-white"></div>
-                                            <strong className="text-gray-900 block">{step.phase}</strong>
-                                            <span className="text-gray-600 block leading-normal">{step.description}</span>
-                                        </div>
-                                    ))}
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Page 5: Financials */}
-                    <div className="space-y-8">
-                        <div className="border-b border-black pb-2">
-                            <span className="text-[10px] font-bold text-violet-800 uppercase tracking-wider">SECTION 04</span>
-                            <h2 className="text-2xl font-black uppercase tracking-tight">Project Investment Details</h2>
-                        </div>
-
-                        <div className="print-table border border-gray-300 rounded-lg overflow-hidden text-sm">
-                            <table className="w-full text-left">
-                                <thead className="bg-gray-100 border-b border-gray-300">
-                                    <tr>
-                                        <th className="p-4 font-bold uppercase text-xs text-gray-600">Milestone</th>
-                                        <th className="p-4 font-bold uppercase text-xs text-gray-600">Project Scope</th>
-                                        <th className="p-4 font-bold uppercase text-xs text-gray-600 text-right">Amount</th>
-                                    </tr>
-                                </thead>
-                                <tbody className="divide-y divide-gray-300">
-                                    {proposal.investment?.map((item, idx) => (
-                                        <tr key={idx}>
-                                            <td className="p-4 font-bold text-gray-900">{item.milestone_name}</td>
-                                            <td className="p-4 text-gray-700">{item.project_scope}</td>
-                                            <td className="p-4 font-bold text-violet-800 text-right">{item.amount}</td>
-                                        </tr>
-                                    ))}
-                                </tbody>
-                            </table>
-                        </div>
-
-                        <div className="print-card border border-gray-300 bg-gray-50 rounded-lg p-6 space-y-4 text-sm">
-                            <div className="flex justify-between border-b border-gray-300 pb-2 text-base font-bold text-black">
-                                <span>Total Project Investment</span>
-                                <span className="text-violet-800">{proposal.final_summary?.total_investment}</span>
-                            </div>
-                            <div className="flex justify-between text-gray-700 font-medium">
-                                <span>Payment Structure</span>
-                                <span className="text-black font-bold">{proposal.final_summary?.payment_structure}</span>
-                            </div>
-                            <div className="flex justify-between text-gray-700 font-medium">
-                                <span>Support Included</span>
-                                <span className="text-black font-bold">{proposal.final_summary?.support_included}</span>
-                            </div>
-                            <div className="flex justify-between text-gray-700 font-medium">
-                                <span>Expected Delivery</span>
-                                <span className="text-black font-bold">{proposal.final_summary?.expected_delivery}</span>
-                            </div>
+                    <div className="flex-1 overflow-y-auto p-6 bg-slate-950/40">
+                        <div className="bg-white rounded-2xl overflow-hidden shadow-2xl max-w-2xl mx-auto proposal-quill-wrapper">
+                            <ReactQuill
+                                theme="snow"
+                                value={freeformHtml}
+                                onChange={setFreeformHtml}
+                                placeholder="Write the proposal body from scratch here â€” the logo, header and footer are applied automatically on export."
+                            />
                         </div>
                     </div>
                 </div>
+            </div>
             )}
         </div>
     );
