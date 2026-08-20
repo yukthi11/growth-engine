@@ -386,6 +386,21 @@ router.post('/export-pdf', async (req, res) => {
     try {
         browser = await puppeteer.launch({ args: ['--no-sandbox', '--disable-setuid-sandbox'] });
         const page = await browser.newPage();
+        // A4 content area (793.7 x 1122.5px at 96dpi) minus the top/bottom margins
+        // below, so `100vh` in the template CSS maps to one real printed page —
+        // needed for the cover to fill exactly one dark page instead of leaving a
+        // white gap where unpainted page canvas shows through below a short cover.
+        // Left/right margin is 0 (horizontal inset comes from body padding instead)
+        // so the dark background paints edge-to-edge instead of leaving a white
+        // vertical strip down both sides of every page.
+        //
+        // top margin is 70px of "real" header content plus a 25px buffer: Puppeteer
+        // measures the header template's height for pagination before the logo
+        // <img>'s data URI has necessarily decoded, so on every page the reserved
+        // top margin can come out shorter than what's actually painted, letting
+        // body content start under the header. Verified empirically — an 8px
+        // buffer still overlapped, 20px fully cleared it; 25px leaves headroom.
+        await page.setViewport({ width: 794, height: 968 });
         await page.setContent(fullHtml, { waitUntil: 'networkidle0' });
 
         const pdfBuffer = await page.pdf({
@@ -394,7 +409,7 @@ router.post('/export-pdf', async (req, res) => {
             displayHeaderFooter: true,
             headerTemplate: buildHeaderTemplate({ logoDataUri: getLogoDataUri(), companyName }),
             footerTemplate: buildFooterTemplate({ confidentialityNote: `Confidential — Prepared for ${meta.businessName || 'Client'}` }),
-            margin: { top: '70px', bottom: '60px', left: '40px', right: '40px' },
+            margin: { top: '95px', bottom: '60px', left: '0px', right: '0px' },
         });
 
         const safeName = (project_name || business_name || 'proposal').replace(/[^a-z0-9]+/gi, '-').toLowerCase();

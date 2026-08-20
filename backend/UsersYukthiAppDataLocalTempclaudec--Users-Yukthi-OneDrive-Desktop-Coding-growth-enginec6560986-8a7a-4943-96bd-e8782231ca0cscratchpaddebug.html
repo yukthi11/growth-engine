@@ -1,24 +1,8 @@
-/**
- * Shared premium PDF template for the Proposal Writer.
- * Both the fixed-format (AI-structured) and freeform (manual) proposal
- * modes render through the same header/footer shell and base typography
- * so every exported document looks consistent and professional.
- */
-
-'use strict';
-
-const escapeHtml = (str = '') =>
-    String(str)
-        .replace(/&/g, '&amp;')
-        .replace(/</g, '&lt;')
-        .replace(/>/g, '&gt;')
-        .replace(/"/g, '&quot;');
-
-// Shared body styling — loaded once via page.setContent(), applies to both modes.
-// Palette lifted from reviveyourbusiness.in/companies/revive-technology (near-black
-// navy page, teal-to-cyan brand gradient as the accent) rather than a generic
-// white-page/purple-accent template look.
-const BASE_STYLE = `
+<!doctype html>
+<html>
+<head>
+    <meta charset="utf-8" />
+    <style>
     * { box-sizing: border-box; -webkit-print-color-adjust: exact; print-color-adjust: exact; }
     html { background: #080d14; }
     body {
@@ -37,7 +21,7 @@ const BASE_STYLE = `
         color: #ffffff;
     }
     .cover {
-        min-height: 100vh;
+        min-height: 0;
         box-sizing: border-box;
         page-break-after: always;
         padding: 8px 4px 0;
@@ -222,79 +206,34 @@ const BASE_STYLE = `
     .freeform-body h1, .freeform-body h2, .freeform-body h3 { margin: 18px 0 8px; }
     .freeform-body p { margin: 0 0 10px; }
     .freeform-body ul, .freeform-body ol { margin: 0 0 10px 18px; }
-`;
-
-function renderCover(proposal, meta) {
-    const date = new Date().toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' });
-    const highlights = (proposal.key_benefits || []).slice(0, 3).map((m) => `
-        <div class="highlight">
-            <div class="value">${escapeHtml(m.value)}</div>
-            <div class="label">${escapeHtml(m.label)}</div>
-        </div>`).join('');
-
-    return `
+</style>
+</head>
+<body>
+    
     <div class="cover">
-        <span class="eyebrow">${escapeHtml(proposal.cover_page?.category_name || 'Business Proposal')}</span>
-        <h1>${escapeHtml(proposal.cover_page?.project_name || meta.projectName || '')}</h1>
-        <p class="headline">"${escapeHtml(proposal.cover_page?.headline || '')}"</p>
-        ${highlights ? `<div class="highlights">${highlights}</div>` : ''}
+        <span class="eyebrow">Business Proposal</span>
+        <h1>Logo Recheck</h1>
+        <p class="headline">"Checking logo on dark bg"</p>
+        
         <div class="meta-row">
-            <span>Prepared For: ${escapeHtml(meta.businessName || '')}</span>
-            <span>Date: ${escapeHtml(date)}</span>
+            <span>Prepared For: Logo Recheck Co</span>
+            <span>Date: 20 August 2026</span>
         </div>
-    </div>`;
-}
-
-function renderFixedBody(proposal, meta) {
-    const benefits = (proposal.key_benefits || []).map((m) => `
-        <div class="metric">
-            <div class="value">${escapeHtml(m.value)}</div>
-            <div class="label">${escapeHtml(m.label)}</div>
-        </div>`).join('');
-
-    const helps = (proposal.how_it_helps || []).map((section) => `
-        <div class="helps-block">
-            <h4>${escapeHtml(section.section_name)}</h4>
-            ${(section.items || []).map((item) => `
-                <div class="helps-item">
-                    <strong>${escapeHtml(item.feature)}</strong>
-                    <span>${escapeHtml(item.benefit)}</span>
-                </div>`).join('')}
-        </div>`).join('');
-
-    const deliverables = (proposal.deliverables || []).map((d) => `<li>${escapeHtml(d)}</li>`).join('');
-
-    const timeline = (proposal.timeline || []).map((step) => `
-        <div class="timeline-item">
-            <strong>${escapeHtml(step.phase)}</strong>
-            <span>${escapeHtml(step.description)}</span>
-        </div>`).join('');
-
-    const investmentRows = (proposal.investment || []).map((item) => `
-        <tr>
-            <td>${escapeHtml(item.milestone_name)}</td>
-            <td>${escapeHtml(item.project_scope)}</td>
-            <td>${escapeHtml(item.amount)}</td>
-        </tr>`).join('');
-
-    const fs = proposal.final_summary || {};
-
-    return `
-    ${renderCover(proposal, meta)}
+    </div>
 
     <section>
         <span class="section-label">01 / Challenge</span>
         <h2 class="section-title">Problem Overview</h2>
         <hr class="section-rule" />
-        <p>${escapeHtml(proposal.problem_overview?.description || '')}</p>
-        <div class="metrics">${benefits}</div>
+        <p>Test.</p>
+        <div class="metrics"></div>
     </section>
 
     <section>
         <span class="section-label">02 / Architecture</span>
         <h2 class="section-title">How This Solution Helps</h2>
         <hr class="section-rule" />
-        ${helps}
+        
     </section>
 
     <section>
@@ -302,12 +241,12 @@ function renderFixedBody(proposal, meta) {
             <div>
                 <span class="section-label">Scope</span>
                 <h2 class="section-title" style="font-size:15px;">Deliverables</h2>
-                <ul class="deliverables">${deliverables}</ul>
+                <ul class="deliverables"></ul>
             </div>
             <div>
                 <span class="section-label">Delivery</span>
                 <h2 class="section-title" style="font-size:15px;">Expected Timeline</h2>
-                ${timeline}
+                
             </div>
         </div>
     </section>
@@ -320,79 +259,16 @@ function renderFixedBody(proposal, meta) {
             <thead>
                 <tr><th>Milestone</th><th>Project Scope</th><th style="text-align:right;">Amount</th></tr>
             </thead>
-            <tbody>${investmentRows}</tbody>
+            <tbody></tbody>
         </table>
         <div class="summary-box">
             <div class="summary-row total">
                 <span>Total Investment</span>
-                <span class="amount">${escapeHtml(fs.total_investment || '')}</span>
+                <span class="amount"></span>
             </div>
-            <div class="summary-row"><span>Payment Structure</span><span>${escapeHtml(fs.payment_structure || '')}</span></div>
-            <div class="summary-row"><span>Support Included</span><span>${escapeHtml(fs.support_included || '')}</span></div>
-            <div class="summary-row"><span>Expected Delivery</span><span>${escapeHtml(fs.expected_delivery || '')}</span></div>
+            <div class="summary-row"><span>Payment Structure</span><span></span></div>
+            <div class="summary-row"><span>Support Included</span><span></span></div>
+            <div class="summary-row"><span>Expected Delivery</span><span></span></div>
         </div>
-    </section>`;
-}
-
-function renderFreeformBody(bodyHtml, meta, coverTitle) {
-    // bodyHtml comes from the Quill editor (already-sanitized HTML on the frontend);
-    // it is trusted the same way the rest of the app trusts operator-authored content.
-    const cover = renderCover(
-        { cover_page: { category_name: 'Custom Proposal', project_name: coverTitle || meta.projectName, headline: '' } },
-        meta
-    );
-    return `${cover}<section><div class="freeform-body">${bodyHtml}</div></section>`;
-}
-
-function wrapFullDocument(bodyHtml) {
-    return `<!doctype html>
-<html>
-<head>
-    <meta charset="utf-8" />
-    <style>${BASE_STYLE}</style>
-</head>
-<body>${bodyHtml}</body>
-</html>`;
-}
-
-// Puppeteer renders header/footer templates in their own isolated context (the
-// page's margin area), so the dark background has to be set explicitly here too
-// — it does not inherit from the body's own background.
-// Puppeteer sizes the header/footer box to the page's top/bottom `margin`
-// (70px / 60px — see export-pdf in routes/proposals.js), but only paints
-// whatever this template itself paints; anything the template doesn't cover
-// falls through to the PDF page's default white canvas. So the wrapper here
-// must be sized to fill that whole box (not just wrap its own text), and
-// -webkit-print-color-adjust forces Chrome to actually keep the background
-// color instead of stripping it in some print paths.
-const HEADER_FOOTER_COLOR_ADJUST = '-webkit-print-color-adjust:exact; print-color-adjust:exact;';
-
-function buildHeaderTemplate({ logoDataUri, companyName }) {
-    const logo = logoDataUri
-        ? `<img src="${logoDataUri}" style="height:20px;width:auto;" />`
-        : `<span style="font-weight:700; color:#dbe4ee;">${escapeHtml(companyName || '')}</span>`;
-    return `
-    <div style="${HEADER_FOOTER_COLOR_ADJUST} width:100%; box-sizing:border-box; background:#080d14; font-family: 'Outfit', Helvetica, Arial, sans-serif; font-size: 8px; color: #7d8ba0; padding: 24px 40px; display:flex; align-items:center; justify-content:space-between; border-bottom: 1px solid rgba(255,255,255,0.1);">
-        <div style="display:flex; align-items:center; gap:8px;">
-            ${logo}
-            <span style="font-weight:700; letter-spacing:0.08em; text-transform:uppercase; color:#dbe4ee;">${escapeHtml(companyName || '')}</span>
-        </div>
-        <span style="text-transform:uppercase; letter-spacing:0.1em;">Proposal</span>
-    </div>`;
-}
-
-function buildFooterTemplate({ confidentialityNote }) {
-    return `
-    <div style="${HEADER_FOOTER_COLOR_ADJUST} width:100%; box-sizing:border-box; background:#080d14; font-family: 'Outfit', Helvetica, Arial, sans-serif; font-size: 8px; color: #627082; padding: 20px 40px; display:flex; align-items:center; justify-content:space-between; border-top: 1px solid rgba(255,255,255,0.1);">
-        <span>${escapeHtml(confidentialityNote || '')}</span>
-        <span class="pageNumber"></span>&nbsp;/&nbsp;<span class="totalPages"></span>
-    </div>`;
-}
-
-module.exports = {
-    wrapFullDocument,
-    renderFixedBody,
-    renderFreeformBody,
-    buildHeaderTemplate,
-    buildFooterTemplate,
-};
+    </section></body>
+</html>

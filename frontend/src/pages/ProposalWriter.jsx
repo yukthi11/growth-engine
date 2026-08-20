@@ -17,7 +17,7 @@ const DEFAULT_MILESTONE_SPLIT = [
     { label: 'On Completion', percentage: 50 },
 ];
 
-const formatINR = (amount) => `â‚¹${Math.round(amount).toLocaleString('en-IN')}`;
+const formatINR = (amount) => `₹${Math.round(amount).toLocaleString('en-IN')}`;
 
 const formatTotals = (oneTime, monthly) => {
     if (oneTime === 0 && monthly === 0) return 'TBD';
@@ -34,9 +34,40 @@ const CustomIcons = {
     Clipboard: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M8 5H6a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2v-1M8 5a2 2 0 002 2h2a2 2 0 002-2M8 5a2 2 0 012-2h2a2 2 0 012 2m0 0h2a2 2 0 012 2v3m2 4H10m0 0l3-3m-3 3l3 3" /></svg>,
     Check: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" /></svg>,
     User: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" /></svg>,
-    ChevronRight: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" /></svg>,
+    ChevronRight: ({ className = '' }) => <svg className={`w-4 h-4 ${className}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M9 5l7 7-7 7" /></svg>,
     Clock: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" /></svg>,
     Briefcase: () => <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M21 13.255A23.931 23.931 0 0112 15c-3.183 0-6.22-.62-9-1.745M16 6V4a2 2 0 00-2-2h-4a2 2 0 00-2 2v2m4 6h.01M5 20h14a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v10a2 2 0 002 2z" /></svg>
+};
+
+const SECTION_ORDER = ['problem', 'helps', 'scope', 'investment'];
+
+// Rough per-section height estimate for the preview's page-break math — tuned
+// against the real PDF template's block sizes, not pixel-exact (the actual
+// export is rendered separately by Puppeteer).
+const estimateSectionHeight = (key, dp) => {
+    const HEADER = 74; // section label + title + rule
+    switch (key) {
+        case 'problem': {
+            let h = HEADER + 110;
+            if (dp.key_benefits?.length) h += 130;
+            return h;
+        }
+        case 'helps': {
+            if (!dp.how_it_helps?.length) return HEADER + 90;
+            return HEADER + dp.how_it_helps.reduce((sum, s) => sum + 56 + (s.items?.length || 0) * 66, 0);
+        }
+        case 'scope': {
+            const delivH = dp.deliverables?.length ? dp.deliverables.length * 30 : 90;
+            const timelineH = dp.timeline?.length ? dp.timeline.length * 90 : 90;
+            return HEADER + 40 + Math.max(delivH, timelineH);
+        }
+        case 'investment': {
+            const rows = dp.investment?.length || 0;
+            return HEADER + 46 + rows * 46 + 190;
+        }
+        default:
+            return 0;
+    }
 };
 
 const TIER_RANK = { hot: 0, warm: 1, cold: 2 };
@@ -62,7 +93,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
     const [timeline, setTimeline] = useState('');
     // lineItems: { [serviceId]: { service, quantity, unit_price, monthly_price } }
     // unit_price/monthly_price default to the catalog's base price but are freely
-    // editable per-proposal â€” the catalog price is only ever a starting point.
+    // editable per-proposal — the catalog price is only ever a starting point.
     const [lineItems, setLineItems] = useState({});
     const [milestoneSplit, setMilestoneSplit] = useState(DEFAULT_MILESTONE_SPLIT);
 
@@ -74,7 +105,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
     const [proposal, setProposal] = useState(null);
     const [copied, setCopied] = useState(false);
 
-    // Fixed-format vs freeform authoring mode â€” see mode toggle below.
+    // Fixed-format vs freeform authoring mode — see mode toggle below.
     const [mode, setMode] = useState('fixed'); // 'fixed' | 'freeform'
     const [logoUrl, setLogoUrl] = useState(null);
     const [isUploadingLogo, setIsUploadingLogo] = useState(false);
@@ -103,6 +134,65 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
     const pricingSummary = formatTotals(oneTimeTotal, monthlyTotal);
     const milestonePercentTotal = milestoneSplit.reduce((sum, m) => sum + Number(m.percentage || 0), 0);
 
+    // Before the AI has generated anything, the preview still mirrors the left
+    // form live — cover, problem statement, selected services, and computed
+    // pricing are all known client-side already. Sections that only the LLM can
+    // fill in (benefits, how-it-helps, phased timeline) render as placeholders
+    // until Generate is clicked.
+    const draftProposal = useMemo(() => ({
+        cover_page: { category_name: industry || 'Business Proposal', project_name: projectName, headline: '' },
+        problem_overview: { description: problem || currentProcess || '' },
+        key_benefits: [],
+        how_it_helps: [],
+        deliverables: Object.values(lineItems).map((item) => item.service.name),
+        timeline: [],
+        investment: milestoneSplit.map((m) => ({
+            milestone_name: m.label,
+            project_scope: `${m.percentage}% of total investment`,
+            amount: pricingSummary === 'TBD' ? 'TBD' : pricingSummary,
+        })),
+        final_summary: {
+            total_investment: pricingSummary,
+            payment_structure: milestoneSplit.map((m) => `${m.percentage}% ${m.label}`).join(', '),
+            support_included: '30 Days Post-Launch Optimization Support',
+            expected_delivery: timeline || 'TBD',
+        },
+    }), [industry, projectName, problem, currentProcess, lineItems, milestoneSplit, pricingSummary, timeline]);
+
+    const displayProposal = proposal || draftProposal;
+    const isDraft = !proposal;
+
+    // Paginate the preview like a real PDF viewer: the cover is always its own
+    // page (matching the backend's forced page-break-after on .cover), and the
+    // four body sections — each atomic in the exported PDF via
+    // page-break-inside: avoid — are greedily packed into fixed-height sheets
+    // using an estimated height (item counts × known per-row heights), so no
+    // DOM measurement/hidden clones are needed for a single-page-at-a-time view.
+    const PAGE_CONTENT_HEIGHT = 900;
+    const bodyPages = useMemo(() => {
+        const result = [[]];
+        let consumed = 0;
+        SECTION_ORDER.forEach((key) => {
+            const h = estimateSectionHeight(key, displayProposal);
+            if (consumed > 0 && consumed + h > PAGE_CONTENT_HEIGHT) {
+                result.push([]);
+                consumed = 0;
+            }
+            result[result.length - 1].push(key);
+            consumed += h;
+        });
+        return result;
+    }, [displayProposal]);
+
+    const totalPages = 1 + bodyPages.length;
+
+    const [previewPageIndex, setPreviewPageIndex] = useState(0);
+    useEffect(() => {
+        if (previewPageIndex > totalPages - 1) setPreviewPageIndex(totalPages - 1);
+    }, [totalPages, previewPageIndex]);
+    // Jump back to the cover whenever a fresh generation replaces the proposal.
+    useEffect(() => { setPreviewPageIndex(0); }, [proposal]);
+
     // Load leads + service catalog for the active workspace company
     useEffect(() => {
         fetchCatalog();
@@ -126,7 +216,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
     };
 
     // Deep-updates a field on the generated proposal by key path, e.g.
-    // ['how_it_helps', 1, 'items', 0, 'benefit'] â€” lets the sandbox stay
+    // ['how_it_helps', 1, 'items', 0, 'benefit'] — lets the sandbox stay
     // fully editable after generation without re-calling the LLM.
     const updateProposalField = (path, value) => {
         setProposal((prev) => {
@@ -149,7 +239,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
     }, [companyId]);
 
     // Auto-select the lead handed off from the leads table's "Generate Proposal"
-    // quick action, once â€” guarded by ref so it doesn't refire on every leads refresh.
+    // quick action, once — guarded by ref so it doesn't refire on every leads refresh.
     useEffect(() => {
         if (initialLeadId && leads.length > 0 && appliedInitialLeadRef.current !== initialLeadId) {
             appliedInitialLeadRef.current = initialLeadId;
@@ -210,7 +300,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
 
     const selectedLead = leads.find((lead) => String(lead.id) === String(selectedLeadId));
 
-    // Triggers AI Autofill for a given lead â€” shared by the search dropdown and
+    // Triggers AI Autofill for a given lead — shared by the search dropdown and
     // the "Generate Proposal" quick-action from the leads table (initialLeadId).
     const selectLead = async (leadId) => {
         setSelectedLeadId(leadId);
@@ -235,7 +325,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
 
             // Pre-check the services matched deterministically from this lead's
             // detected gaps (see backend/src/utils/serviceMatcher.js), seeded with
-            // catalog base prices â€” still fully editable below before generating.
+            // catalog base prices — still fully editable below before generating.
             const seeded = {};
             (autofill.recommended_services || []).forEach((service) => {
                 seeded[service.id] = {
@@ -315,7 +405,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                 selected_services: items.map((item) => item.service.name),
                 notes: customNotes,
                 timeline,
-                // Structured pricing â€” total and milestone amounts are computed
+                // Structured pricing — total and milestone amounts are computed
                 // server-side from these, never invented by the LLM.
                 line_items: items.map((item) => ({
                     name: item.service.name,
@@ -335,7 +425,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
         }
     };
 
-    // Export the current (possibly edited) proposal as a real, premium PDF â€”
+    // Export the current (possibly edited) proposal as a real, premium PDF —
     // rendered server-side via Puppeteer so it's identical regardless of browser.
     const handleDownloadPdf = async () => {
         setIsDownloading(true);
@@ -443,7 +533,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                             <span className="text-[9px] font-black uppercase text-slate-500">No Logo</span>
                         )}
                         <span className="text-[9px] font-black uppercase text-violet-400">
-                            {isUploadingLogo ? 'Uploadingâ€¦' : (logoUrl ? 'Change' : 'Upload Logo')}
+                            {isUploadingLogo ? 'Uploading…' : (logoUrl ? 'Change' : 'Upload Logo')}
                         </span>
                         <input type="file" accept="image/png,image/jpeg,image/svg+xml" className="hidden" onChange={handleLogoUpload} disabled={isUploadingLogo} />
                     </label>
@@ -473,18 +563,18 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                 {/* Left Form Panel */}
                 <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 space-y-6 premium-shadow">
                     <h3 className="text-lg font-black text-white tracking-tight uppercase flex items-center gap-2">
-                        ðŸ“‹ Define Proposal Scope
+                        📋 Define Proposal Scope
                     </h3>
                     
                     <div className="space-y-4">
-                        {/* Lead Selector â€” searchable, sorted hot -> warm -> cold */}
+                        {/* Lead Selector — searchable, sorted hot -> warm -> cold */}
                         <div className="flex flex-col gap-2 relative">
                             <label className="text-[10px] font-black uppercase text-slate-400 tracking-wider">
                                 Load from Database (Autofill)
                             </label>
                             <input
                                 type="text"
-                                value={isLeadDropdownOpen ? leadQuery : (selectedLead ? `ðŸ¢ ${selectedLead.business_name} (${selectedLead.location_normalized || 'No Location'})` : '')}
+                                value={isLeadDropdownOpen ? leadQuery : (selectedLead ? `🏢 ${selectedLead.business_name} (${selectedLead.location_normalized || 'No Location'})` : '')}
                                 onChange={(e) => setLeadQuery(e.target.value)}
                                 onFocus={() => { setIsLeadDropdownOpen(true); setLeadQuery(''); }}
                                 onBlur={() => setTimeout(() => setIsLeadDropdownOpen(false), 150)}
@@ -508,7 +598,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                             onMouseDown={() => selectLead(lead.id)}
                                             className="px-4 py-2.5 cursor-pointer flex items-center justify-between gap-2 hover:bg-violet-600/10 transition-colors"
                                         >
-                                            <span className="text-xs font-bold text-white truncate">ðŸ¢ {lead.business_name} <span className="text-slate-500">({lead.location_normalized || 'No Location'})</span></span>
+                                            <span className="text-xs font-bold text-white truncate">🏢 {lead.business_name} <span className="text-slate-500">({lead.location_normalized || 'No Location'})</span></span>
                                             {TIER_BADGE[lead.tier] && (
                                                 <span className={`shrink-0 px-1.5 py-0.5 rounded text-[8px] font-black uppercase tracking-widest border ${TIER_BADGE[lead.tier]}`}>
                                                     {lead.tier}
@@ -644,7 +734,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                                                                     value={item.unit_price}
                                                                                     onChange={(e) => handleLineItemFieldChange(service.id, 'unit_price', e.target.value)}
                                                                                     className="w-28 bg-white/5 border border-white/5 rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-violet-500"
-                                                                                    placeholder="One-time â‚¹"
+                                                                                    placeholder="One-time ₹"
                                                                                 />
                                                                             )}
                                                                             {(service.price_type === 'monthly' || service.price_type === 'one_time_plus_monthly') && (
@@ -653,7 +743,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                                                                     value={item.monthly_price}
                                                                                     onChange={(e) => handleLineItemFieldChange(service.id, 'monthly_price', e.target.value)}
                                                                                     className="w-28 bg-white/5 border border-white/5 rounded-lg px-2 py-1.5 text-xs font-bold text-white focus:outline-none focus:border-violet-500"
-                                                                                    placeholder="Monthly â‚¹"
+                                                                                    placeholder="Monthly ₹"
                                                                                 />
                                                                             )}
                                                                         </>
@@ -667,7 +757,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                                                         title="Quantity"
                                                                     />
                                                                     {service.price_type === 'custom_quote' && (
-                                                                        <span className="text-[10px] font-bold text-slate-600 uppercase">Custom quote â€” priced outside this proposal</span>
+                                                                        <span className="text-[10px] font-bold text-slate-600 uppercase">Custom quote — priced outside this proposal</span>
                                                                     )}
                                                                 </div>
                                                             )}
@@ -695,7 +785,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                 />
                             </div>
 
-                            {/* Milestone Split Builder â€” percentages of the computed total above, not free text */}
+                            {/* Milestone Split Builder — percentages of the computed total above, not free text */}
                             <div className="flex flex-col gap-2">
                                 <div className="flex items-center justify-between">
                                     <label className="text-[9px] font-black uppercase text-slate-500">Payment Milestones</label>
@@ -721,7 +811,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                             />
                                             <span className="text-xs font-bold text-slate-500">%</span>
                                             {milestoneSplit.length > 1 && (
-                                                <button type="button" onClick={() => removeMilestone(idx)} className="text-slate-600 hover:text-red-400 text-xs font-black px-1">âœ•</button>
+                                                <button type="button" onClick={() => removeMilestone(idx)} className="text-slate-600 hover:text-red-400 text-xs font-black px-1">✕</button>
                                             )}
                                         </div>
                                     ))}
@@ -766,283 +856,341 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                     </div>
                 </div>
 
-                {/* Right Interactive Preview Panel */}
-                <div className="flex flex-col h-[calc(100vh-140px)] overflow-hidden">
-                    {proposal ? (
-                        <div className="flex-1 flex flex-col bg-white/[0.02] border border-white/5 rounded-[40px] overflow-hidden premium-shadow">
-                            {/* Actions Header */}
-                            <div className="p-6 border-b border-white/5 bg-midnight-lighter flex items-center justify-between">
-                                <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                                    LIVE CONSULTANT PREVIEW
-                                </span>
-                                <div className="flex items-center gap-3">
-                                    <button
-                                        onClick={handleCopyMarkdown}
-                                        className="px-4 py-2 border border-white/10 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-all text-[10px] font-black uppercase tracking-widest flex items-center gap-2"
-                                    >
-                                        {copied ? <CustomIcons.Check /> : <CustomIcons.Clipboard />}
-                                        {copied ? 'Copied!' : 'Copy Markdown'}
-                                    </button>
-                                    <button
-                                        onClick={handleDownloadPdf}
-                                        disabled={isDownloading}
-                                        className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-xl transition-all text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-violet-600/15 disabled:opacity-50"
-                                    >
-                                        {isDownloading ? (
-                                            <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
-                                        ) : (
-                                            <CustomIcons.Download />
-                                        )}
-                                        {isDownloading ? 'Rendering PDFâ€¦' : 'Download PDF'}
-                                    </button>
-                                </div>
+                {/* Right Interactive Preview Panel — always shows the live doc, styled
+                    to match the exported PDF, so what you see is what you'll download */}
+                <div className="flex flex-col">
+                    <div className="flex flex-col bg-white/[0.02] border border-white/5 rounded-[40px] overflow-hidden premium-shadow">
+                        {/* Actions Header */}
+                        <div className="p-6 border-b border-white/5 bg-midnight-lighter flex items-center justify-between">
+                            <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
+                                {isDraft ? 'LIVE DOCUMENT PREVIEW · DRAFT' : 'LIVE CONSULTANT PREVIEW'}
+                            </span>
+                            <div className="flex items-center gap-3">
+                                <button
+                                    onClick={handleCopyMarkdown}
+                                    disabled={isDraft}
+                                    className="px-4 py-2 border border-white/10 rounded-xl bg-white/5 hover:bg-white/10 text-slate-300 hover:text-white transition-all text-[10px] font-black uppercase tracking-widest flex items-center gap-2 disabled:opacity-40 disabled:pointer-events-none"
+                                >
+                                    {copied ? <CustomIcons.Check /> : <CustomIcons.Clipboard />}
+                                    {copied ? 'Copied!' : 'Copy Markdown'}
+                                </button>
+                                <button
+                                    onClick={handleDownloadPdf}
+                                    disabled={isDownloading || isDraft}
+                                    title={isDraft ? 'Generate the full proposal first' : undefined}
+                                    className="px-4 py-2 bg-violet-600 hover:bg-violet-500 text-white rounded-xl transition-all text-[10px] font-black uppercase tracking-widest flex items-center gap-2 shadow-lg shadow-violet-600/15 disabled:opacity-40 disabled:pointer-events-none"
+                                >
+                                    {isDownloading ? (
+                                        <div className="w-3.5 h-3.5 border-2 border-white/30 border-t-white rounded-full animate-spin"></div>
+                                    ) : (
+                                        <CustomIcons.Download />
+                                    )}
+                                    {isDownloading ? 'Rendering PDF…' : 'Download PDF'}
+                                </button>
                             </div>
+                        </div>
 
-                            {/* Document Render Panel */}
-                            <div className="flex-1 overflow-y-auto p-10 bg-slate-950/40 space-y-12">
-                                <div className="proposal-render-doc bg-[#0d0f17] border border-white/5 rounded-3xl p-10 max-w-2xl mx-auto space-y-12 shadow-2xl relative text-slate-300">
-                                    {/* Cover Page Card */}
-                                    <div className="p-10 rounded-2xl border border-violet-500/10 bg-gradient-to-br from-violet-950/20 via-indigo-950/20 to-midnight flex flex-col min-h-[400px] justify-between relative overflow-hidden">
-                                        <div className="absolute inset-0 bg-violet-600/[0.02] radial-gradient"></div>
-                                        <div className="z-10 flex items-center justify-between">
-                                            <span className="text-xs font-black text-violet-400 tracking-[0.2em] uppercase">REVIVE TECHNOLOGY</span>
-                                            <div className="w-8 h-8 rounded-lg border border-white/10 flex items-center justify-center font-black text-sm text-white">R</div>
+                        {/* Document Render Panel — one page at a time, like a PDF viewer */}
+                        <div className="p-10 bg-slate-950/40">
+                            <div className="doc-page doc-pages">
+                                {/* Page 1 — Cover, always its own sheet (matches the backend's forced page break) */}
+                                {previewPageIndex === 0 && (
+                                <div className="doc-sheet rounded-2xl shadow-2xl p-12">
+                                    <div className="doc-header">
+                                        <div className="doc-header-brand">
+                                            {logoUrl ? (
+                                                <img src={`${API_BASE_URL}${logoUrl}`} alt="Company logo" />
+                                            ) : (
+                                                <span>Revive Technology</span>
+                                            )}
                                         </div>
-                                        <div className="z-10 space-y-4 my-8">
-                                            <input
-                                                value={proposal.cover_page?.category_name || ''}
-                                                onChange={(e) => updateProposalField(['cover_page', 'category_name'], e.target.value)}
-                                                placeholder="Business Automation Systems"
-                                                className="w-full bg-transparent text-[10px] font-black text-violet-300/60 uppercase tracking-widest focus:outline-none focus:text-violet-300 placeholder:text-violet-300/40"
-                                            />
-                                            <input
-                                                value={proposal.cover_page?.project_name || projectName || ''}
-                                                onChange={(e) => updateProposalField(['cover_page', 'project_name'], e.target.value)}
-                                                className="w-full bg-transparent text-3xl font-black text-white italic tracking-tight uppercase leading-tight focus:outline-none"
-                                            />
-                                            <input
-                                                value={proposal.cover_page?.headline || ''}
-                                                onChange={(e) => updateProposalField(['cover_page', 'headline'], e.target.value)}
-                                                className="w-full bg-transparent text-sm font-bold text-violet-300 italic focus:outline-none"
-                                            />
-                                        </div>
-                                        <div className="z-10 border-t border-white/5 pt-4 flex items-center justify-between text-[10px] font-black text-slate-500 uppercase tracking-wider">
-                                            <span>Prepared For: {businessName}</span>
-                                            <span>Date: {new Date().toLocaleDateString(undefined, {year: 'numeric', month: 'long', day: 'numeric'})}</span>
-                                        </div>
+                                        <span>Proposal</span>
                                     </div>
 
-                                    {/* Problem Overview & Metrics */}
-                                    <div className="space-y-6">
-                                        <div className="space-y-2">
-                                            <span className="text-[9px] font-black text-violet-400 uppercase tracking-widest uppercase">01 / Challenge</span>
-                                            <h3 className="text-xl font-black text-white uppercase tracking-tight italic">Problem Overview</h3>
-                                        </div>
-                                        <textarea
-                                            value={proposal.problem_overview?.description || ''}
-                                            onChange={(e) => updateProposalField(['problem_overview', 'description'], e.target.value)}
-                                            rows={4}
-                                            className="w-full bg-transparent text-sm font-medium leading-relaxed text-slate-400 focus:outline-none resize-none"
-                                        />
+                                    <input
+                                        value={displayProposal.cover_page?.category_name || ''}
+                                        readOnly={isDraft}
+                                        onChange={(e) => updateProposalField(['cover_page', 'category_name'], e.target.value)}
+                                        placeholder="Business Automation Systems"
+                                        className="doc-eyebrow"
+                                    />
+                                    <input
+                                        value={displayProposal.cover_page?.project_name || projectName || ''}
+                                        readOnly={isDraft}
+                                        onChange={(e) => updateProposalField(['cover_page', 'project_name'], e.target.value)}
+                                        placeholder="Project name"
+                                        className="doc-h1"
+                                    />
+                                    <input
+                                        value={displayProposal.cover_page?.headline || ''}
+                                        readOnly={isDraft}
+                                        onChange={(e) => updateProposalField(['cover_page', 'headline'], e.target.value)}
+                                        placeholder={isDraft ? 'A one-line headline appears here after Generate' : ''}
+                                        className="doc-headline"
+                                    />
+                                    <div className="doc-meta-row">
+                                        <span>Prepared For: {businessName || '—'}</span>
+                                        <span>Date: {new Date().toLocaleDateString('en-IN', { year: 'numeric', month: 'long', day: 'numeric' })}</span>
+                                    </div>
 
-                                        {/* Metric Cards */}
-                                        <div className="grid grid-cols-3 gap-4 pt-4">
-                                            {proposal.key_benefits?.map((metric, idx) => (
-                                                <div key={idx} className="bg-white/[0.01] border border-white/5 p-4 rounded-2xl text-center space-y-1">
+                                    <div className="doc-footer">
+                                        <span>Confidential — Prepared for {businessName || 'Client'}</span>
+                                        <span>Page 1 / {totalPages}</span>
+                                    </div>
+                                </div>
+                                )}
+
+                                {/* Body page — sections greedily packed by estimated height, one page shown at a time */}
+                                {previewPageIndex > 0 && (() => {
+                                    const pageKeys = bodyPages[previewPageIndex - 1] || [];
+                                    return (
+                                    <div className="doc-sheet rounded-2xl shadow-2xl p-12">
+                                        <div className="doc-header">
+                                            <div className="doc-header-brand">
+                                                {logoUrl ? (
+                                                    <img src={`${API_BASE_URL}${logoUrl}`} alt="Company logo" />
+                                                ) : (
+                                                    <span>Revive Technology</span>
+                                                )}
+                                            </div>
+                                            <span>Proposal</span>
+                                        </div>
+
+                                        {pageKeys.includes('problem') && (
+                                <div className="doc-section">
+                                    <span className="doc-section-label">01 / Challenge</span>
+                                    <h3 className="doc-section-title">Problem Overview</h3>
+                                    <hr className="doc-rule" />
+                                    <textarea
+                                        value={displayProposal.problem_overview?.description || ''}
+                                        readOnly={isDraft}
+                                        onChange={(e) => updateProposalField(['problem_overview', 'description'], e.target.value)}
+                                        placeholder="Describe the operational problem on the left to see it here."
+                                        rows={4}
+                                        className="doc-p"
+                                    />
+                                    {displayProposal.key_benefits?.length > 0 && (
+                                        <div className="doc-metrics">
+                                            {displayProposal.key_benefits.map((metric, idx) => (
+                                                <div key={idx} className="doc-metric">
                                                     <input
                                                         value={metric.value || ''}
                                                         onChange={(e) => updateProposalField(['key_benefits', idx, 'value'], e.target.value)}
-                                                        className="w-full bg-transparent text-xl font-black text-violet-400 tracking-tight leading-none text-center focus:outline-none"
+                                                        className="value"
                                                     />
                                                     <input
                                                         value={metric.label || ''}
                                                         onChange={(e) => updateProposalField(['key_benefits', idx, 'label'], e.target.value)}
-                                                        className="w-full bg-transparent text-[8px] font-black uppercase text-slate-500 tracking-wider text-center focus:outline-none"
+                                                        className="label"
                                                     />
                                                 </div>
                                             ))}
                                         </div>
-                                    </div>
+                                    )}
+                                </div>
+                                        )}
 
-                                    {/* Solution detail */}
-                                    <div className="space-y-8">
-                                        <div className="space-y-2">
-                                            <span className="text-[9px] font-black text-violet-400 uppercase tracking-widest">02 / Architecture</span>
-                                            <h3 className="text-xl font-black text-white uppercase tracking-tight italic">How This Solution Helps</h3>
-                                        </div>
-
-                                        <div className="space-y-6">
-                                            {proposal.how_it_helps?.map((section, idx) => (
-                                                <div key={idx} className="bg-white/[0.01] border border-white/5 p-6 rounded-2xl space-y-4">
-                                                    <h4 className="text-xs font-black text-white uppercase tracking-wider flex items-center gap-2">
-                                                        <span className="w-1.5 h-1.5 rounded-full bg-violet-500 shrink-0"></span>
+                                        {/* Solution detail */}
+                                        {pageKeys.includes('helps') && (
+                                <div className="doc-section">
+                                    <span className="doc-section-label">02 / Architecture</span>
+                                    <h3 className="doc-section-title">How This Solution Helps</h3>
+                                    <hr className="doc-rule" />
+                                    {displayProposal.how_it_helps?.length > 0 ? (
+                                        displayProposal.how_it_helps.map((section, idx) => (
+                                            <div key={idx} className="doc-helps-block">
+                                                <h4>
+                                                    <input
+                                                        value={section.section_name || ''}
+                                                        onChange={(e) => updateProposalField(['how_it_helps', idx, 'section_name'], e.target.value)}
+                                                        className="w-full bg-transparent border-none"
+                                                    />
+                                                </h4>
+                                                {section.items?.map((item, itemIdx) => (
+                                                    <div key={itemIdx} className="doc-helps-item">
                                                         <input
-                                                            value={section.section_name || ''}
-                                                            onChange={(e) => updateProposalField(['how_it_helps', idx, 'section_name'], e.target.value)}
-                                                            className="w-full bg-transparent focus:outline-none"
+                                                            value={item.feature || ''}
+                                                            onChange={(e) => updateProposalField(['how_it_helps', idx, 'items', itemIdx, 'feature'], e.target.value)}
+                                                            className="feature"
                                                         />
-                                                    </h4>
-                                                    <div className="space-y-3 pl-4 border-l border-white/5">
-                                                        {section.items?.map((item, itemIdx) => (
-                                                            <div key={itemIdx} className="space-y-1 text-xs">
-                                                                <input
-                                                                    value={item.feature || ''}
-                                                                    onChange={(e) => updateProposalField(['how_it_helps', idx, 'items', itemIdx, 'feature'], e.target.value)}
-                                                                    className="w-full bg-transparent font-black text-slate-300 focus:outline-none"
-                                                                />
-                                                                <textarea
-                                                                    value={item.benefit || ''}
-                                                                    onChange={(e) => updateProposalField(['how_it_helps', idx, 'items', itemIdx, 'benefit'], e.target.value)}
-                                                                    rows={2}
-                                                                    className="w-full bg-transparent font-medium text-slate-400 leading-relaxed resize-none focus:outline-none"
-                                                                />
-                                                            </div>
-                                                        ))}
+                                                        <textarea
+                                                            value={item.benefit || ''}
+                                                            onChange={(e) => updateProposalField(['how_it_helps', idx, 'items', itemIdx, 'benefit'], e.target.value)}
+                                                            rows={2}
+                                                            className="benefit"
+                                                        />
                                                     </div>
-                                                </div>
-                                            ))}
-                                        </div>
-                                    </div>
+                                                ))}
+                                            </div>
+                                        ))
+                                    ) : (
+                                        <div className="doc-placeholder">Generate the proposal to build this section</div>
+                                    )}
+                                </div>
+                                        )}
 
-                                    {/* Scope & Deliverables */}
-                                    <div className="grid grid-cols-1 md:grid-cols-2 gap-8 pt-4">
-                                        <div className="space-y-4">
-                                            <h4 className="text-xs font-black text-white uppercase tracking-widest flex items-center gap-2">
-                                                <CustomIcons.Briefcase /> Deliverables
-                                            </h4>
-                                            <ul className="space-y-2 text-xs font-bold text-slate-400">
-                                                {proposal.deliverables?.map((deliv, idx) => (
-                                                    <li key={idx} className="flex items-start gap-2">
-                                                        <span className="text-violet-400 mt-0.5">â€¢</span>
+                                        {/* Scope & Deliverables */}
+                                        {pageKeys.includes('scope') && (
+                                <div className="doc-section doc-two-col">
+                                    <div>
+                                        <span className="doc-section-label">Scope</span>
+                                        <h3 className="doc-section-title" style={{ fontSize: '15px' }}>Deliverables</h3>
+                                        {displayProposal.deliverables?.length > 0 ? (
+                                            <ul className="doc-deliverables">
+                                                {displayProposal.deliverables.map((deliv, idx) => (
+                                                    <li key={idx}>
+                                                        <span>•</span>
                                                         <input
                                                             value={deliv || ''}
+                                                            readOnly={isDraft}
                                                             onChange={(e) => updateProposalField(['deliverables', idx], e.target.value)}
-                                                            className="w-full bg-transparent focus:outline-none"
                                                         />
                                                     </li>
                                                 ))}
                                             </ul>
-                                        </div>
-
-                                        <div className="space-y-4">
-                                            <h4 className="text-xs font-black text-white uppercase tracking-widest flex items-center gap-2">
-                                                <CustomIcons.Clock /> Expected Timeline
-                                            </h4>
-                                            <div className="space-y-4 relative border-l border-white/5 pl-4">
-                                                {proposal.timeline?.map((step, idx) => (
-                                                    <div key={idx} className="space-y-1 relative text-xs">
-                                                        <div className="absolute -left-[21px] top-1 w-2.5 h-2.5 rounded-full border border-violet-500 bg-midnight"></div>
-                                                        <input
-                                                            value={step.phase || ''}
-                                                            onChange={(e) => updateProposalField(['timeline', idx, 'phase'], e.target.value)}
-                                                            className="w-full bg-transparent font-black text-white focus:outline-none"
-                                                        />
-                                                        <textarea
-                                                            value={step.description || ''}
-                                                            onChange={(e) => updateProposalField(['timeline', idx, 'description'], e.target.value)}
-                                                            rows={2}
-                                                            className="w-full bg-transparent font-medium text-slate-500 leading-normal resize-none focus:outline-none"
-                                                        />
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        </div>
+                                        ) : (
+                                            <div className="doc-placeholder">Select services on the left</div>
+                                        )}
                                     </div>
+                                    <div>
+                                        <span className="doc-section-label">Delivery</span>
+                                        <h3 className="doc-section-title" style={{ fontSize: '15px' }}>Expected Timeline</h3>
+                                        {displayProposal.timeline?.length > 0 ? (
+                                            displayProposal.timeline.map((step, idx) => (
+                                                <div key={idx} className="doc-timeline-item">
+                                                    <input
+                                                        value={step.phase || ''}
+                                                        onChange={(e) => updateProposalField(['timeline', idx, 'phase'], e.target.value)}
+                                                        className="phase"
+                                                    />
+                                                    <textarea
+                                                        value={step.description || ''}
+                                                        onChange={(e) => updateProposalField(['timeline', idx, 'description'], e.target.value)}
+                                                        rows={2}
+                                                        className="description"
+                                                    />
+                                                </div>
+                                            ))
+                                        ) : (
+                                            <div className="doc-placeholder">Generate to build phased timeline</div>
+                                        )}
+                                    </div>
+                                </div>
+                                        )}
 
-                                    {/* Final Investment Breakdown */}
-                                    <div className="space-y-6 pt-4 border-t border-white/5">
-                                        <h4 className="text-xs font-black text-white uppercase tracking-widest">
-                                            03 / Financial Investment
-                                        </h4>
-                                        
-                                        <div className="border border-white/5 rounded-2xl overflow-hidden text-xs">
-                                            <table className="w-full text-left">
-                                                <thead className="bg-white/5">
-                                                    <tr>
-                                                        <th className="p-4 font-black uppercase text-[10px] text-slate-400">Milestone</th>
-                                                        <th className="p-4 font-black uppercase text-[10px] text-slate-400">Project Scope</th>
-                                                        <th className="p-4 font-black uppercase text-[10px] text-slate-400 text-right">Amount</th>
-                                                    </tr>
-                                                </thead>
-                                                <tbody className="divide-y divide-white/5">
-                                                    {proposal.investment?.map((item, idx) => (
-                                                        <tr key={idx} className="hover:bg-white/[0.01]">
-                                                            <td className="p-4 font-black text-white">
-                                                                <input
-                                                                    value={item.milestone_name || ''}
-                                                                    onChange={(e) => updateProposalField(['investment', idx, 'milestone_name'], e.target.value)}
-                                                                    className="w-full bg-transparent font-black text-white focus:outline-none"
-                                                                />
-                                                            </td>
-                                                            <td className="p-4 font-medium text-slate-400">
-                                                                <input
-                                                                    value={item.project_scope || ''}
-                                                                    onChange={(e) => updateProposalField(['investment', idx, 'project_scope'], e.target.value)}
-                                                                    className="w-full bg-transparent font-medium text-slate-400 focus:outline-none"
-                                                                />
-                                                            </td>
-                                                            <td className="p-4 font-black text-violet-400 text-right">
-                                                                <input
-                                                                    value={item.amount || ''}
-                                                                    onChange={(e) => updateProposalField(['investment', idx, 'amount'], e.target.value)}
-                                                                    className="w-full bg-transparent font-black text-violet-400 text-right focus:outline-none"
-                                                                />
-                                                            </td>
-                                                        </tr>
-                                                    ))}
-                                                </tbody>
-                                            </table>
+                                        {/* Final Investment Breakdown */}
+                                        {pageKeys.includes('investment') && (
+                                <div className="doc-section">
+                                    <span className="doc-section-label">03 / Financial Investment</span>
+                                    <h3 className="doc-section-title">Investment Summary</h3>
+                                    <hr className="doc-rule" />
+                                    <table className="doc-table">
+                                        <thead>
+                                            <tr>
+                                                <th>Milestone</th>
+                                                <th>Project Scope</th>
+                                                <th style={{ textAlign: 'right' }}>Amount</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            {displayProposal.investment?.map((item, idx) => (
+                                                <tr key={idx}>
+                                                    <td>
+                                                        <input
+                                                            value={item.milestone_name || ''}
+                                                            readOnly={isDraft}
+                                                            onChange={(e) => updateProposalField(['investment', idx, 'milestone_name'], e.target.value)}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <input
+                                                            value={item.project_scope || ''}
+                                                            readOnly={isDraft}
+                                                            onChange={(e) => updateProposalField(['investment', idx, 'project_scope'], e.target.value)}
+                                                        />
+                                                    </td>
+                                                    <td>
+                                                        <input
+                                                            value={item.amount || ''}
+                                                            readOnly={isDraft}
+                                                            onChange={(e) => updateProposalField(['investment', idx, 'amount'], e.target.value)}
+                                                        />
+                                                    </td>
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
+
+                                    <div className="doc-summary-box">
+                                        <div className="doc-summary-row total">
+                                            <span>Total Investment</span>
+                                            <input
+                                                value={displayProposal.final_summary?.total_investment || ''}
+                                                readOnly={isDraft}
+                                                onChange={(e) => updateProposalField(['final_summary', 'total_investment'], e.target.value)}
+                                            />
                                         </div>
-
-                                        <div className="bg-white/[0.01] border border-white/5 rounded-2xl p-6 space-y-3 text-xs font-bold text-slate-400">
-                                            <div className="flex items-center justify-between text-white border-b border-white/5 pb-2">
-                                                <span className="font-black uppercase tracking-wider shrink-0">Total Investment</span>
-                                                <input
-                                                    value={proposal.final_summary?.total_investment || ''}
-                                                    onChange={(e) => updateProposalField(['final_summary', 'total_investment'], e.target.value)}
-                                                    className="w-1/2 bg-transparent text-lg font-black text-violet-400 leading-none text-right focus:outline-none"
-                                                />
-                                            </div>
-                                            <div className="flex justify-between items-center">
-                                                <span className="shrink-0">Payment Structure</span>
-                                                <input
-                                                    value={proposal.final_summary?.payment_structure || ''}
-                                                    onChange={(e) => updateProposalField(['final_summary', 'payment_structure'], e.target.value)}
-                                                    className="w-1/2 bg-transparent text-slate-300 text-right font-black focus:outline-none"
-                                                />
-                                            </div>
-                                            <div className="flex justify-between items-center">
-                                                <span className="shrink-0">Support Included</span>
-                                                <input
-                                                    value={proposal.final_summary?.support_included || ''}
-                                                    onChange={(e) => updateProposalField(['final_summary', 'support_included'], e.target.value)}
-                                                    className="w-1/2 bg-transparent text-slate-300 text-right font-black focus:outline-none"
-                                                />
-                                            </div>
-                                            <div className="flex justify-between items-center">
-                                                <span className="shrink-0">Expected Delivery</span>
-                                                <input
-                                                    value={proposal.final_summary?.expected_delivery || ''}
-                                                    onChange={(e) => updateProposalField(['final_summary', 'expected_delivery'], e.target.value)}
-                                                    className="w-1/2 bg-transparent text-slate-300 text-right font-black focus:outline-none"
-                                                />
-                                            </div>
+                                        <div className="doc-summary-row">
+                                            <span>Payment Structure</span>
+                                            <input
+                                                value={displayProposal.final_summary?.payment_structure || ''}
+                                                readOnly={isDraft}
+                                                onChange={(e) => updateProposalField(['final_summary', 'payment_structure'], e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="doc-summary-row">
+                                            <span>Support Included</span>
+                                            <input
+                                                value={displayProposal.final_summary?.support_included || ''}
+                                                readOnly={isDraft}
+                                                onChange={(e) => updateProposalField(['final_summary', 'support_included'], e.target.value)}
+                                            />
+                                        </div>
+                                        <div className="doc-summary-row">
+                                            <span>Expected Delivery</span>
+                                            <input
+                                                value={displayProposal.final_summary?.expected_delivery || ''}
+                                                readOnly={isDraft}
+                                                onChange={(e) => updateProposalField(['final_summary', 'expected_delivery'], e.target.value)}
+                                            />
                                         </div>
                                     </div>
                                 </div>
+                                        )}
+
+                                        <div className="doc-footer">
+                                            <span>Confidential — Prepared for {businessName || 'Client'}</span>
+                                            <span>Page {previewPageIndex + 1} / {totalPages}</span>
+                                        </div>
+                                    </div>
+                                    );
+                                })()}
+
+                                {/* Page navigation */}
+                                <div className="doc-nav">
+                                    <button
+                                        type="button"
+                                        onClick={() => setPreviewPageIndex((p) => Math.max(0, p - 1))}
+                                        disabled={previewPageIndex === 0}
+                                        className="doc-nav-btn"
+                                        aria-label="Previous page"
+                                    >
+                                        <CustomIcons.ChevronRight className="rotate-180" />
+                                    </button>
+                                    <span className="doc-nav-label">Page {previewPageIndex + 1} of {totalPages}</span>
+                                    <button
+                                        type="button"
+                                        onClick={() => setPreviewPageIndex((p) => Math.min(totalPages - 1, p + 1))}
+                                        disabled={previewPageIndex === totalPages - 1}
+                                        className="doc-nav-btn"
+                                        aria-label="Next page"
+                                    >
+                                        <CustomIcons.ChevronRight />
+                                    </button>
+                                </div>
                             </div>
                         </div>
-                    ) : (
-                        <div className="flex-1 bg-white/[0.02] border border-white/5 rounded-[40px] flex flex-col items-center justify-center p-10 text-center premium-shadow">
-                            <div className="w-20 h-20 rounded-[28px] bg-white/5 flex items-center justify-center text-3xl mb-6 shadow-inner">
-                                ðŸ“ƒ
-                            </div>
-                            <h4 className="text-lg font-black text-slate-300 uppercase tracking-tight italic">Live Proposal Sandbox</h4>
-                            <p className="text-xs font-medium text-slate-600 max-w-sm mt-2 leading-relaxed">
-                                Prefill with a lead from your database or enter parameters manually, then click Generate to construct a premium, client-ready proposal.
-                            </p>
-                        </div>
-                    )}
+                    </div>
                 </div>
             </div>
             )}
@@ -1052,7 +1200,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                 {/* Left: fixed necessities only */}
                 <div className="bg-white/[0.02] border border-white/5 rounded-[40px] p-8 space-y-6 premium-shadow">
                     <h3 className="text-lg font-black text-white tracking-tight uppercase flex items-center gap-2">
-                        ðŸ“‹ Fixed Necessities
+                        📋 Fixed Necessities
                     </h3>
                     <p className="text-xs font-medium text-slate-500 leading-relaxed">
                         These stay fixed in the exported PDF's cover and header/footer. Everything else below is written from scratch.
@@ -1088,7 +1236,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                         ) : (
                             <CustomIcons.Download />
                         )}
-                        {isDownloading ? 'Rendering PDFâ€¦' : 'Download PDF'}
+                        {isDownloading ? 'Rendering PDF…' : 'Download PDF'}
                     </button>
                 </div>
 
@@ -1096,7 +1244,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                 <div className="flex flex-col h-[calc(100vh-140px)] overflow-hidden bg-white/[0.02] border border-white/5 rounded-[40px] premium-shadow">
                     <div className="p-6 border-b border-white/5 bg-midnight-lighter">
                         <span className="text-[10px] font-black uppercase tracking-wider text-slate-400">
-                            FREEFORM CANVAS â€” LIVE
+                            FREEFORM CANVAS — LIVE
                         </span>
                     </div>
                     <div className="flex-1 overflow-y-auto p-6 bg-slate-950/40">
@@ -1105,7 +1253,7 @@ const ProposalWriter = ({ companyId, initialLeadId }) => {
                                 theme="snow"
                                 value={freeformHtml}
                                 onChange={setFreeformHtml}
-                                placeholder="Write the proposal body from scratch here â€” the logo, header and footer are applied automatically on export."
+                                placeholder="Write the proposal body from scratch here — the logo, header and footer are applied automatically on export."
                             />
                         </div>
                     </div>
